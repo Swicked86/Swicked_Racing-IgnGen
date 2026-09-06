@@ -89,26 +89,17 @@ def prompt_engine_spec(
         cast=int,
     )
 
-    vacuum_advance = float(d.vacuum_advance)
-    vacuum_advance_max = float(d.vacuum_advance_max)
-    vacuum_full_map_kpa = float(d.vacuum_full_map_kpa)
+    vacuum_total_timing = float(d.vacuum_total_timing)
+    vacuum_full_map_kpa = float(d.vacuum_full_map_kpa)  # fixed 40 kPa; not prompted
     boost_retard_per_psi = float(d.boost_retard_per_psi)
     boost_retard_max = float(d.boost_retard_max)
 
     if layers in {"vacuum", "full"}:
-        print("\n— Vacuum advance —")
-        print("  (full advance at static ≤50 kPa; taper to 0° by atmosphere)")
-        vacuum_advance = float(
+        print("\n— Vacuum —")
+        vacuum_total_timing = float(
             _ask(
-                "Vacuum advance (additive ° at ≤50 kPa)",
-                _num_default(d.vacuum_advance, as_int=True),
-                cast=int,
-            )
-        )
-        vacuum_advance_max = float(
-            _ask(
-                "Vacuum timing limit (total ° max)",
-                _num_default(d.vacuum_advance_max, as_int=True),
+                "Total timing",
+                _num_default(d.vacuum_total_timing, as_int=True),
                 cast=int,
             )
         )
@@ -143,9 +134,9 @@ def prompt_engine_spec(
         mech_timing_at_peak_torque=float(mech_at_tq),
         idle_rpm=float(idle_rpm),
         idle_pocket_width=float(idle_pocket_width),
-        vacuum_advance=float(vacuum_advance),
+        vacuum_total_timing=float(vacuum_total_timing),
         vacuum_full_map_kpa=float(vacuum_full_map_kpa),
-        vacuum_advance_max=float(vacuum_advance_max),
+        vacuum_advance_max=float(vacuum_total_timing),
         boost_retard_per_psi=float(boost_retard_per_psi),
         boost_retard_max=float(boost_retard_max),
     )
