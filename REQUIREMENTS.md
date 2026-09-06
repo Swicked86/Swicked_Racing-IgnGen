@@ -7,12 +7,12 @@ Source of truth for behavior. Code should match this; Alpha is a **preset/export
 Review each layer before enabling the next:
 
 1. **`mechanical`** — RPM-only curve; load rows are identical
-2. **`vacuum` (current review)** — mechanical + vacuum (total timing)
-3. Boost retard
+2. **`vacuum`** — mechanical + vacuum (total timing)
+3. **`boost` (current review)** — vacuum + boost retard (mirror fan from 100 kPa)
 4. Idle pocket
 5. Soft redline retard
 
-CLI: `igngen new --layers mechanical|vacuum|full` (default **`vacuum`** while reviewing this layer).
+CLI: `igngen new --layers mechanical|vacuum|boost|full` (default **`boost`**).
 
 ## Inputs
 
@@ -46,7 +46,12 @@ Optional later: compressor efficiency / NA base HP for turbo VE concepts (shared
      `(total − peak_mech) × mechanical_progress` (same 0→1 schedule as mechanical)
    - Load cells between 40 kPa and atm → **whole-degree** staircase
      from (mech + scaled add) down to mechanical
-3. **Boost retard** (separate **total °** min — **not** a mirror of vacuum) — later layer
+3. **Boost retard** (mirrors vacuum on the boost side of 100 kPa):
+   - One prompt: **Boost timing limit** (total ° min under full boost; default **20°**)
+   - **100 kPa row = mechanical** (master)
+   - Full retard at ≥ configured max boost MAP → that limit (once mechanical all-in)
+   - Below peak-torque RPM: retard × mechanical_progress
+   - Load cells between atm and max boost → **whole-degree** staircase
 4. **Idle pocket**: localized only around idle RPM ± pocket width and **light load only** — later layer
 5. **Soft power loss**: start retarding ~500 RPM before redline — later layer
 6. Atmosphere (**100 kPa** abs / ~0 inHg Alpha gauge) **always** on the load axis as crossover
