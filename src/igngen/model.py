@@ -59,8 +59,9 @@ def mechanical_advance(rpm: float, spec: EngineSpec) -> float:
     """Distributor mechanical curve vs RPM (load-independent).
 
     - At/below idle: base_timing (initial / static)
-    - Idle → peak torque RPM: smooth ramp to mech_timing_at_peak_torque
-    - Above peak torque: hold that total (no further climb)
+    - Idle → peak torque RPM: **linear** climb to mech_timing_at_peak_torque
+      (starts advancing right out of idle — not after the idle pocket)
+    - Above peak torque: hold that total
     """
     base = spec.base_timing
     peak = spec.mech_timing_at_peak_torque
@@ -70,13 +71,13 @@ def mechanical_advance(rpm: float, spec: EngineSpec) -> float:
     if rpm >= spec.peak_torque_rpm:
         return peak
     t = (rpm - idle) / max(spec.peak_torque_rpm - idle, 1.0)
-    return base + (peak - base) * _smoothstep(t)
+    return base + (peak - base) * t
 
 
 def describe_mechanical_curve(spec: EngineSpec) -> str:
     return (
         f"Mechanical only: {spec.base_timing:.0f}° at idle "
-        f"({spec.idle_rpm:.0f} RPM) → {spec.mech_timing_at_peak_torque:.0f}° "
+        f"({spec.idle_rpm:.0f} RPM) → linear to {spec.mech_timing_at_peak_torque:.0f}° "
         f"by peak torque ({spec.peak_torque_rpm:.0f} RPM), hold above"
     )
 
@@ -123,7 +124,6 @@ def timing_at(
     if layers == "mechanical":
         return int(round(max(0.0, mechanical_advance(rpm, spec))))
 
-    # full stack (kept for later; not the default yet)
     value = (
         mechanical_advance(rpm, spec)
         + pressure_delta(map_kpa, spec)

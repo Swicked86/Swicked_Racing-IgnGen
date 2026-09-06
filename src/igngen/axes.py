@@ -1,7 +1,11 @@
-"""Nonlinear, landmark-priority axis generation (audio-scale philosophy).
+"""Nonlinear RPM/load axis generation.
 
-Density follows rate-of-change of the timing model — especially the
-mechanical advance ramp (idle → peak torque) — not raw RPM span.
+RPM columns use an explicit budget: after mandatory anchors, remaining
+slots are split **2:1** between
+  (above idle pocket → peak torque)  :  (peak torque → overspeed).
+
+Mechanical advance starts at idle (not after the pocket); the dense zone
+is where that climb is visible on the map.
 """
 
 from __future__ import annotations
@@ -18,41 +22,140 @@ class Landmark:
     label: str
 
 
-def rpm_landmarks(spec: EngineSpec) -> list[Landmark]:
-    """RPM breakpoints ranked for selection into a fixed column count.
+def _as_int(v: float) -> float:
+    return float(int(round(v)))
 
-    Mechanical advance is flat at idle and flat after peak torque, so those
-    zones get fewer slots. The idle→peak-torque ramp gets the densest set.
-    Idle-pocket edges stay medium priority until the pocket layer is active.
+
+def _unique_sorted(values: list[float]) -> list[float]:
+    out: list[float] = []
+    for v in sorted(_as_int(x) for x in values):
+        if not out or abs(out[-1] - v) >= 1:
+            out.append(v)
+    return out
+
+
+def _even_interior(lo: float, hi: float, n: int) -> list[float]:
+    """n distinct integer points strictly between lo and hi."""
+    lo_i, hi_i = _as_int(lo), _as_int(hi)
+    if n <= 0 or hi_i - lo_i <= 1:
+        return []
+    points: list[float] = []
+    for i in range(1, n + 1):
+        raw = lo_i + (hi_i - lo_i) * i / (n + 1)
+        v = _as_int(raw)
+        if v <= lo_i:
+            v = lo_i + i
+        if v >= hi_i:
+            v = hi_i - (n + 1 - i)
+        points.append(float(v))
+    return _unique_sorted([p for p in points if lo_i < p < hi_i])
+
+
+def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
+    """Build RPM breakpoints with a 2:1 dense:sparse budget.
+
+    Dense zone: above idle-pocket upper → peak torque (mech climb).
+    Sparse zone: peak torque → overspeed (hold / soft later).
+    Anchors always try to keep: cranking, idle, pocket upper, peak torque,
+    redline, overspeed.
     """
-    idle = spec.idle_rpm
-    tq = spec.peak_torque_rpm
-    half = spec.idle_pocket_width / 2.0
-    soft = spec.redline_rpm - spec.soft_limit_rpm_before_redline
-    overspeed = spec.redline_rpm + 1000.0
-    span = max(tq - idle, 1.0)
+    if count < 2:
+        raise ValueError("axis count must be >= 2")
 
-    return [
-        # Mandatory anchors
-        Landmark(300, 100, "cranking"),
-        Landmark(idle, 100, "idle_target"),
-        Landmark(tq, 100, "peak_torque"),
-        Landmark(spec.redline_rpm, 95, "redline"),
-        Landmark(overspeed, 90, "overspeed"),
-        # Mechanical ramp — high priority so they survive on 12/16 tables
-        Landmark(idle + 0.20 * span, 92, "mech_ramp_20"),
-        Landmark(idle + 0.40 * span, 92, "mech_ramp_40"),
-        Landmark(idle + 0.60 * span, 92, "mech_ramp_60"),
-        Landmark(idle + 0.80 * span, 92, "mech_ramp_80"),
-        Landmark(idle + min(200.0, 0.08 * span), 75, "off_idle"),
-        # Idle pocket edges — useful later; don't steal ramp slots on small tables
-        Landmark(max(400.0, idle - half), 55, "idle_lower"),
-        Landmark(idle + half, 55, "idle_upper"),
-        # Post-peak / soft — sparse; timing holds flat on mechanical layer
-        Landmark(spec.peak_hp_rpm, 45, "peak_hp"),
-        Landmark(soft, 40, "soft_limit"),
-        Landmark((tq + soft) / 2.0, 30, "post_tq_mid"),
-    ]
+    idle = float(spec.idle_rpm)
+    half = max(spec.idle_pocket_width / 2.0, 0.0)
+    pocket_hi = idle + half
+    tq = float(spec.peak_torque_rpm)
+    redline = float(spec.redline_rpm)
+    overspeed = redline + 1000.0
+    cranking = 300.0
+
+    # Ensure pocket_hi is past idle so "out of idle" is a real edge
+    if pocket_hi <= idle:
+        pocket_hi = idle + 100.0
+    if tq <= pocket_hi + 50:
+        # degenerate engine numbers — fall back to idle→tq dense
+        pocket_hi = idle + max(50.0, (tq - idle) * 0.1)
+
+    anchors = _unique_sorted([cranking, idle, pocket_hi, tq, redline, overspeed])
+
+    # If too many anchors for the table, keep the essentials first
+    if len(anchors) >= count:
+        essential = _unique_sorted([cranking, idle, tq, redline, overspeed])
+        if len(essential) >= count:
+            # extreme small tables
+            pick = [cranking, idle, tq, overspeed]
+            return _unique_sorted(pick)[:count]
+        # drop pocket_hi / extras until we fit
+        while len(anchors) > count:
+            # drop the least critical interior anchor (pocket_hi first if present)
+            drop_candidates = [v for v in anchors if v not in {cranking, idle, tq, redline, overspeed}]
+            if not drop_candidates:
+                anchors = essential[:count]
+                break
+            anchors.remove(max(drop_candidates))  # drop highest non-essential (usually overspeed neighbor)
+            # actually drop pocket_hi preferentially
+            if pocket_hi in anchors and len(anchors) > count:
+                anchors = [v for v in anchors if v != _as_int(pocket_hi)]
+                anchors = _unique_sorted(anchors)
+        return anchors[:count]
+
+    remaining = count - len(anchors)
+    # 2:1 — dense (pocket_hi → tq) : sparse (tq → overspeed)
+    dense_slots = (remaining * 2) // 3
+    sparse_slots = remaining - dense_slots
+
+    dense = _even_interior(pocket_hi, tq, dense_slots)
+    sparse = _even_interior(tq, overspeed, sparse_slots)
+
+    axis = _unique_sorted(anchors + dense + sparse)
+
+    # Top up if dedupe ate slots — prefer dense zone
+    guard = 0
+    while len(axis) < count and guard < 50:
+        guard += 1
+        # find largest gap in dense zone first
+        best_i = None
+        best_score = -1.0
+        for i in range(len(axis) - 1):
+            lo, hi = axis[i], axis[i + 1]
+            span = hi - lo
+            if span < 2:
+                continue
+            mid = (lo + hi) / 2.0
+            if pocket_hi <= mid <= tq:
+                score = span * 3.0
+            elif mid > tq:
+                score = span * 1.0
+            else:
+                score = span * 0.25
+            if score > best_score:
+                best_score = score
+                best_i = i
+        if best_i is None:
+            axis.append(axis[-1] + 100)
+        else:
+            mid = _as_int((axis[best_i] + axis[best_i + 1]) / 2.0)
+            if mid <= axis[best_i] or mid >= axis[best_i + 1]:
+                axis.append(axis[-1] + 100)
+            else:
+                axis.insert(best_i + 1, mid)
+        axis = _unique_sorted(axis)
+
+    return axis[:count]
+
+
+def describe_rpm_axis(spec: EngineSpec, axis: list[float]) -> str:
+    idle = spec.idle_rpm
+    half = spec.idle_pocket_width / 2.0
+    pocket_hi = idle + half
+    tq = spec.peak_torque_rpm
+    dense = sum(1 for x in axis if pocket_hi < x < tq)
+    sparse = sum(1 for x in axis if x > tq)
+    return (
+        f"RPM axis {len(axis)} cols — dense above pocket→peak TQ: {dense} interiors, "
+        f"after peak TQ: {sparse} (target ~2:1 interiors)"
+    )
 
 
 def load_landmarks_kpa(spec: EngineSpec) -> list[Landmark]:
@@ -90,56 +193,14 @@ def load_landmarks_inhg(spec: EngineSpec) -> list[Landmark]:
     ]
 
 
-def _rpm_gap_score(lo: float, hi: float, spec: EngineSpec) -> float:
-    """Prefer splitting gaps where mechanical timing is changing."""
-    span = hi - lo
-    if span <= 0:
-        return 0.0
-    mid = (lo + hi) / 2.0
-    idle = spec.idle_rpm
-    tq = spec.peak_torque_rpm
-    soft = spec.redline_rpm - spec.soft_limit_rpm_before_redline
-
-    if mid <= idle:
-        weight = 0.35  # below idle — mostly flat base
-    elif mid < tq:
-        weight = 3.0  # mechanical ramp — highest density
-    elif mid < soft:
-        weight = 0.35  # post-peak hold — sparse
-    else:
-        weight = 0.7  # soft / overspeed — some resolution
-    return span * weight
-
-
-def _load_gap_score(lo: float, hi: float, spec: EngineSpec) -> float:
-    span = hi - lo
-    if span <= 0:
-        return 0.0
-    mid = (lo + hi) / 2.0
-    atm = spec.atm_kpa
-    # denser near atmosphere crossover and idle MAP band
-    if abs(mid - atm) <= 25:
-        weight = 2.0
-    elif mid < 70:
-        weight = 1.4
-    else:
-        weight = 1.0
-    return span * weight
-
-
-def select_axis(
-    landmarks: list[Landmark],
-    count: int,
-    *,
-    gap_score=None,
-    spec: EngineSpec | None = None,
-) -> list[float]:
+def select_axis(landmarks: list[Landmark], count: int) -> list[float]:
+    """Legacy priority picker — used for load axes."""
     if count < 2:
         raise ValueError("axis count must be >= 2")
 
     best: dict[float, Landmark] = {}
     for lm in landmarks:
-        key = float(int(round(lm.value)))
+        key = _as_int(lm.value)
         if key not in best or lm.priority > best[key].priority:
             best[key] = Landmark(key, lm.priority, lm.label)
     ranked = sorted(best.values(), key=lambda x: (-x.priority, x.value))
@@ -150,70 +211,34 @@ def select_axis(
             break
         if any(abs(lm.value - c.value) < 1e-6 for c in chosen):
             continue
-        # Skip near-duplicates (within 2% of neighbor span or 75 RPM)
-        if any(abs(lm.value - c.value) < 75 for c in chosen):
-            # allow if both are very high priority anchors
-            if lm.priority < 95:
-                continue
         chosen.append(lm)
 
     values = sorted(c.value for c in chosen)
-
-    def _score(lo: float, hi: float) -> float:
-        if gap_score is not None and spec is not None:
-            return float(gap_score(lo, hi, spec))
-        return hi - lo
-
     while len(values) < count:
-        gaps = [(_score(values[i], values[i + 1]), i) for i in range(len(values) - 1)]
+        gaps = [(values[i + 1] - values[i], i) for i in range(len(values) - 1)]
         gaps.sort(reverse=True)
-        if not gaps or gaps[0][0] <= 0:
+        if not gaps or gaps[0][0] <= 1:
             break
         _, i = gaps[0]
-        mid = float(int(round((values[i] + values[i + 1]) / 2.0)))
-        if mid in values or mid <= values[i] or mid >= values[i + 1]:
+        mid = _as_int((values[i] + values[i + 1]) / 2.0)
+        if mid <= values[i] or mid >= values[i + 1] or mid in values:
             mid = values[i] + 1
             if mid >= values[i + 1]:
                 break
         values.insert(i + 1, mid)
+        values = _unique_sorted(values)
 
-    values = sorted(set(float(int(round(v))) for v in values))
     while len(values) < count:
-        # Prefer filling the highest-scoring remaining gap
-        if len(values) >= 2:
-            gaps = [(_score(values[i], values[i + 1]), i) for i in range(len(values) - 1)]
-            gaps.sort(reverse=True)
-            _, i = gaps[0]
-            mid = float(int(round((values[i] + values[i + 1]) / 2.0)))
-            if mid <= values[i] or mid >= values[i + 1] or mid in values:
-                values.append(values[-1] + 100)
-            else:
-                values.insert(i + 1, mid)
-            values = sorted(set(values))
-        else:
-            values.append(values[-1] + 100)
+        values.append(values[-1] + 100)
+        values = _unique_sorted(values)
 
-    return [float(v) for v in values[:count]]
-
-
-def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
-    return select_axis(
-        rpm_landmarks(spec),
-        count,
-        gap_score=_rpm_gap_score,
-        spec=spec,
-    )
+    return values[:count]
 
 
 def generate_load_axis(spec: EngineSpec, count: int, *, unit: str = "kPa") -> list[float]:
     if unit.lower() in {"inhg", "inhg_gauge"}:
         return select_axis(load_landmarks_inhg(spec), count)
-    return select_axis(
-        load_landmarks_kpa(spec),
-        count,
-        gap_score=_load_gap_score,
-        spec=spec,
-    )
+    return select_axis(load_landmarks_kpa(spec), count)
 
 
 def example_axes_for_docs(spec: EngineSpec | None = None) -> dict[str, list[float]]:
