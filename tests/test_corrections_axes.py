@@ -18,6 +18,7 @@ def test_axes_are_whole_numbers():
 def test_vacuum_and_boost_limits_are_total_timing():
     spec = EngineSpec(
         base_timing=15,
+        mech_timing_at_peak_torque=32,
         vacuum_advance_per_kpa=2.0,
         vacuum_advance_max=40,
         boost_retard_per_psi=3.0,
@@ -27,13 +28,13 @@ def test_vacuum_and_boost_limits_are_total_timing():
         soft_limit_retard=0,
     )
     # Deep vacuum: step would overshoot; clamp to total vacuum limit
-    assert timing_at(4800, 40, spec) == 40
+    assert timing_at(4800, 40, spec, layers="full") == 40
     # Mild vacuum: below total limit → mechanical + step
-    mild = timing_at(1100, 96, spec)  # 4 kPa below → +8° on base 15 = 23
+    mild = timing_at(1100, 96, spec, layers="full")  # 4 kPa below → +8° on base 15 = 23
     assert mild == 23
     # Boost: step would go under floor; clamp to total boost limit
     over = 100 + 10 * 6.895  # 10 psi
-    assert timing_at(4800, over, spec) == 12
+    assert timing_at(4800, over, spec, layers="full") == 12
 
 
 def test_swicked_view_bottom_left_origin():
@@ -45,20 +46,18 @@ def test_swicked_view_bottom_left_origin():
     )
     text = table.format_grid(layout="swicked", color=False)
     lines = text.splitlines()
-    # First data row is high load (100); last data row before rpm axis is low (40)
     data = [ln for ln in lines if ln.strip()[:1].isdigit()]
     assert data[0].lstrip().startswith("100")
     assert data[-1].lstrip().startswith("40")
-    # RPM labels on the bottom
     assert any(ln.strip().startswith("rpm") for ln in lines)
     assert lines[-1].strip().startswith("RPM")
     rpm_line = next(ln for ln in lines if ln.strip().startswith("rpm"))
     assert "1000" in rpm_line and "2000" in rpm_line
 
 
-def test_idle_pocket_width_affects_timing():
-    wide = EngineSpec(idle_rpm=1100, idle_pocket_width=400, base_timing=15)
-    narrow = EngineSpec(idle_rpm=1100, idle_pocket_width=100, base_timing=15)
-    t_wide = timing_at(1300, 45, wide)
-    t_narrow = timing_at(1300, 45, narrow)
+def test_idle_pocket_width_affects_timing_full_layers():
+    wide = EngineSpec(idle_rpm=1100, idle_pocket_width=400, base_timing=10)
+    narrow = EngineSpec(idle_rpm=1100, idle_pocket_width=100, base_timing=10)
+    t_wide = timing_at(1300, 45, wide, layers="full")
+    t_narrow = timing_at(1300, 45, narrow, layers="full")
     assert t_wide != t_narrow
