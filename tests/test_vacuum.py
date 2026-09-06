@@ -52,8 +52,8 @@ def test_vacuum_layer_adds_on_mechanical():
     assert timing_at(4800, 20, spec, layers="vacuum") == 42
     # at atm: mechanical only
     assert timing_at(4800, 100, spec, layers="vacuum") == 32
-    # idle + full vac
-    assert timing_at(1100, 45, spec, layers="vacuum") == 20
+    # idle pocket: vacuum gated off — mechanical base only
+    assert timing_at(1100, 45, spec, layers="vacuum") == 10
 
 
 def test_vacuum_respects_total_ceiling():
@@ -86,3 +86,44 @@ def test_static_50_kpa_full_in_not_rate_based():
     assert vacuum_advance(50, spec) == 12
     assert vacuum_advance(49, spec) == 12
     assert abs(vacuum_advance(75, spec) - 6.0) < 1e-6
+
+
+def test_no_vacuum_in_idle_pocket():
+    """Idle corner stays on mechanical base (vac ramps in after pocket)."""
+    from igngen.model import vacuum_rpm_scale, vacuum_advance_at
+
+    spec = _spec(idle_rpm=670, idle_pocket_width=100, base_timing=16)
+    # pocket 620…670…720
+    assert vacuum_rpm_scale(300, spec) == 0.0
+    assert vacuum_rpm_scale(670, spec) == 0.0
+    assert vacuum_rpm_scale(720, spec) == 0.0
+    assert timing_at(670, 30, spec, layers="vacuum") == 16
+    assert timing_at(720, 30, spec, layers="vacuum") == 16
+    # fully in by vacuum_full_in_rpm
+    from igngen.model import vacuum_full_in_rpm
+
+    full = vacuum_full_in_rpm(spec)
+    assert vacuum_rpm_scale(full, spec) == 1.0
+    assert vacuum_advance_at(full, 30, spec) == 10
+    # Fully phased in: mechanical at that RPM + full +10 vac
+    from igngen.model import mechanical_advance
+
+    expect = int(round(mechanical_advance(full, spec) + 10))
+    expect = min(expect, int(spec.vacuum_advance_max))
+    assert timing_at(full, 30, spec, layers="vacuum") == expect
+    # mid-ramp between pocket_hi and full
+    mid = (720 + full) / 2
+    scale = vacuum_rpm_scale(mid, spec)
+    assert 0.4 < scale < 0.6
+    assert 0 < vacuum_advance_at(mid, 30, spec) < 10
+
+
+def test_vacuum_rpm_ramp_midpoint():
+    from igngen.model import vacuum_rpm_scale, vacuum_full_in_rpm
+
+    spec = _spec(idle_rpm=1100, idle_pocket_width=250)
+    # pocket_hi = 1225; full ≈ 1225+825 = 2050
+    full = vacuum_full_in_rpm(spec)
+    assert full > 1225
+    assert vacuum_rpm_scale(1225, spec) == 0.0
+    assert abs(vacuum_rpm_scale((1225 + full) / 2, spec) - 0.5) < 0.05
