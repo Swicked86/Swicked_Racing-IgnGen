@@ -101,6 +101,20 @@ def load_vehicle(path: Path) -> VehicleProfile:
         ),
         vacuum_full_map_kpa=40.0,
         vacuum_advance_max=f(vac, "vacuum_total_timing", 50),
+        boost_timing_limit=(
+            f(cp["boost"], "boost_timing_limit", 20)
+            if cp.has_section("boost") and "boost_timing_limit" in cp["boost"]
+            else f(cp["boost"], "boost_retard_max", 20)
+            if cp.has_section("boost")
+            else 20.0
+        ),
+        boost_retard_max=(
+            f(cp["boost"], "boost_timing_limit", 20)
+            if cp.has_section("boost") and "boost_timing_limit" in cp["boost"]
+            else f(cp["boost"], "boost_retard_max", 20)
+            if cp.has_section("boost")
+            else 20.0
+        ),
     )
     return VehicleProfile(
         name=veh.get("name", path.stem),
@@ -124,6 +138,6 @@ def describe_vehicle(v: VehicleProfile) -> str:
         f"redline {s.redline_rpm:.0f}\n"
         f"  idle {s.idle_rpm:.0f} ±{half:.0f} (pocket width {s.idle_pocket_width:.0f}) | "
         f"base {s.base_timing:.0f}° → peak mech {s.mech_timing_at_peak_torque:.0f}° | "
-        f"vac total {s.vacuum_total_timing:.0f}° | "
+        f"vac total {s.vacuum_total_timing:.0f}° | boost limit {s.boost_timing_limit:.0f}° | "
         f"boost {boost_note}"
     )
