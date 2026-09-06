@@ -38,7 +38,9 @@ class EngineSpec:
     soft_limit_rpm_before_redline: float = 500.0
     soft_limit_retard: float = 10.0
     vacuum_advance_per_kpa: float = 0.35  # legacy full-model rate; unused by vacuum layer
-    vacuum_advance_max: float = 42.0  # total ° ceiling under vacuum
+    vacuum_advance_max: float = 42.0
+    # RPM where vacuum add is fully phased in (0 = auto: pocket_hi + ramp)
+    vacuum_full_rpm: float = 0.0  # total ° ceiling under vacuum
     boost_retard_per_psi: float = 1.5
     boost_retard_max: float = 10.0
     map_floor: float = 0.0
@@ -95,6 +97,41 @@ def vacuum_advance(map_kpa: float, spec: EngineSpec) -> float:
     return add * (1.0 - t)
 
 
+
+def _pocket_hi_rpm(spec: EngineSpec) -> float:
+    half = max(spec.idle_pocket_width / 2.0, 50.0)
+    return float(spec.idle_rpm) + half
+
+
+def vacuum_full_in_rpm(spec: EngineSpec) -> float:
+    """RPM at which vacuum advance is fully applied (above idle pocket)."""
+    if spec.vacuum_full_rpm and spec.vacuum_full_rpm > 0:
+        return float(spec.vacuum_full_rpm)
+    pocket_hi = _pocket_hi_rpm(spec)
+    # ~0.8–1.0k above pocket so idle corner stays at mechanical base
+    return pocket_hi + max(800.0, float(spec.idle_rpm) * 0.75)
+
+
+def vacuum_rpm_scale(rpm: float, spec: EngineSpec) -> float:
+    """0 through the idle pocket; linear to 1 by vacuum_full_in_rpm.
+
+    Keeps cranking/idle cells on mechanical base so vacuum does not
+    light up the whole idle corner of the map.
+    """
+    pocket_hi = _pocket_hi_rpm(spec)
+    full_at = vacuum_full_in_rpm(spec)
+    if rpm <= pocket_hi:
+        return 0.0
+    if rpm >= full_at:
+        return 1.0
+    return (rpm - pocket_hi) / max(full_at - pocket_hi, 1.0)
+
+
+def vacuum_advance_at(rpm: float, map_kpa: float, spec: EngineSpec) -> float:
+    """MAP vacuum curve gated by RPM (no vac in the idle pocket)."""
+    return vacuum_advance(map_kpa, spec) * vacuum_rpm_scale(rpm, spec)
+
+
 def describe_mechanical_curve(spec: EngineSpec) -> str:
     return (
         f"Mechanical: {spec.base_timing:.0f}° at idle "
@@ -104,9 +141,12 @@ def describe_mechanical_curve(spec: EngineSpec) -> str:
 
 
 def describe_vacuum_curve(spec: EngineSpec) -> str:
+    pocket_hi = _pocket_hi_rpm(spec)
+    full_rpm = vacuum_full_in_rpm(spec)
     return (
         f"Vacuum: +{spec.vacuum_advance:.0f}° full at ≤{spec.vacuum_full_map_kpa:.0f} kPa, "
         f"taper to 0° by atm ({spec.atm_kpa:.0f} kPa); "
+        f"0° through idle pocket (≤{pocket_hi:.0f} RPM), full by {full_rpm:.0f} RPM; "
         f"total ceiling {spec.vacuum_advance_max:.0f}°"
     )
 
@@ -157,17 +197,19 @@ def timing_at(
         return int(round(max(0.0, mech)))
 
     if layers == "vacuum":
-        value = mech + vacuum_advance(map_kpa, spec)
+        value = mech + vacuum_advance_at(rpm, map_kpa, spec)
         if map_kpa < spec.atm_kpa:
             value = min(value, spec.vacuum_advance_max)
         return int(round(max(0.0, value)))
 
-    # full — vacuum uses new curve; boost / idle / soft still staged here
-    value = (
-        mech
-        + pressure_delta(map_kpa, spec)
-        + idle_pocket_correction(rpm, map_kpa, spec)
-    )
+    # full — vacuum RPM-gated; boost / idle / soft still staged here
+    atm = spec.atm_kpa
+    if map_kpa <= atm:
+        vac_boost = vacuum_advance_at(rpm, map_kpa, spec)
+    else:
+        over_psi = (map_kpa - atm) / KPA_PER_PSI
+        vac_boost = -over_psi * spec.boost_retard_per_psi
+    value = mech + vac_boost + idle_pocket_correction(rpm, map_kpa, spec)
     atm = spec.atm_kpa
     if map_kpa < atm:
         value = min(value, spec.vacuum_advance_max)
