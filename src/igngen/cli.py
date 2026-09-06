@@ -11,6 +11,7 @@ from .io_files import load_table, save_table
 from .model import (
     EngineSpec,
     describe_mechanical_curve,
+    describe_boost_curve,
     describe_vacuum_curve,
     generate_table,
     validate_power,
@@ -24,7 +25,7 @@ from .vehicles import describe_vehicle, find_vehicle, list_vehicles
 _LAYOUTS = ("swicked", "alpha")
 _EXPORTS = ("swicked", "alpha")
 _DEFAULT_PRESET = "base"
-_DEFAULT_LAYERS = "vacuum"
+_DEFAULT_LAYERS = "boost"
 
 
 def _ask_table_size() -> tuple[int, int]:
@@ -71,6 +72,9 @@ def _apply_cli_overrides(spec: EngineSpec, args: argparse.Namespace) -> EngineSp
     if getattr(args, "vacuum_total", None) is not None:
         spec.vacuum_total_timing = float(args.vacuum_total)
         spec.vacuum_advance_max = float(args.vacuum_total)
+    if getattr(args, "boost_limit", None) is not None:
+        spec.boost_timing_limit = float(args.boost_limit)
+        spec.boost_retard_max = float(args.boost_limit)
     return spec
 
 
@@ -96,9 +100,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_new.add_argument(
         "--layers",
-        choices=("mechanical", "vacuum", "full"),
+        choices=("mechanical", "vacuum", "boost", "full"),
         default=_DEFAULT_LAYERS,
-        help="Timing layers (default: vacuum — mechanical + vac; review before full)",
+        help="Timing layers (default: boost — mech + vac + boost retard)",
     )
     p_new.add_argument("--rpm", help="RPM start:stop:step (overrides generated/fixed axes)")
     p_new.add_argument("--load", help="Load start:stop:step (overrides generated/fixed axes)")
@@ -114,6 +118,12 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=None,
         help="Total timing ° at full vacuum (≤40 kPa)",
+    )
+    p_new.add_argument(
+        "--boost-limit",
+        type=int,
+        default=None,
+        help="Total timing ° minimum at full boost",
     )
     p_new.add_argument("--peak-torque-rpm", type=int, default=None)
     p_new.add_argument("--peak-hp", type=float, default=None)
@@ -345,8 +355,10 @@ def main(argv: list[str] | None = None) -> int:
                 else (preset.origin if preset else "bottom_left")
             )
             print(describe_mechanical_curve(spec))
-            if layers in {"vacuum", "full"}:
+            if layers in {"vacuum", "boost", "full"}:
                 print(describe_vacuum_curve(spec))
+            if layers in {"boost", "full"}:
+                print(describe_boost_curve(spec))
             if layers == "mechanical":
                 print(
                     "(load axis is unused for timing in this layer — "
