@@ -1,11 +1,11 @@
 """Nonlinear RPM/load axis generation.
 
-RPM columns use an explicit budget: after mandatory anchors, remaining
-slots are split **2:1** between
-  (above idle pocket → peak torque)  :  (peak torque → overspeed).
+RPM columns: after low anchors (cranking, idle, pocket upper), remaining
+slots are split **2:1** by zone:
+  2 — (above idle pocket → peak torque]  (mechanical climb)
+  1 — (peak torque → overspeed]          (hold / soft later)
 
-Mechanical advance starts at idle (not after the pocket); the dense zone
-is where that climb is visible on the map.
+Mechanical advance starts at idle (linear); the pocket is not a freeze on the RPM curve.
 """
 
 from __future__ import annotations
@@ -26,39 +26,37 @@ def _as_int(v: float) -> float:
     return float(int(round(v)))
 
 
-def _unique_sorted(values: list[float]) -> list[float]:
+def _unique_sorted(values: list[float], *, min_gap: float = 1.0) -> list[float]:
     out: list[float] = []
     for v in sorted(_as_int(x) for x in values):
-        if not out or abs(out[-1] - v) >= 1:
+        if not out or abs(out[-1] - v) >= min_gap:
             out.append(v)
     return out
 
 
-def _even_interior(lo: float, hi: float, n: int) -> list[float]:
-    """n distinct integer points strictly between lo and hi."""
+def _even_inclusive_end(lo: float, hi: float, n: int) -> list[float]:
+    """n points in (lo, hi], always including hi when n >= 1."""
     lo_i, hi_i = _as_int(lo), _as_int(hi)
-    if n <= 0 or hi_i - lo_i <= 1:
+    if n <= 0:
         return []
+    if n == 1:
+        return [hi_i]
+    if hi_i <= lo_i + 1:
+        return [hi_i]
     points: list[float] = []
-    for i in range(1, n + 1):
-        raw = lo_i + (hi_i - lo_i) * i / (n + 1)
+    for i in range(1, n):
+        raw = lo_i + (hi_i - lo_i) * i / n
         v = _as_int(raw)
         if v <= lo_i:
             v = lo_i + i
         if v >= hi_i:
-            v = hi_i - (n + 1 - i)
+            v = hi_i - (n - i)
         points.append(float(v))
-    return _unique_sorted([p for p in points if lo_i < p < hi_i])
+    points.append(hi_i)
+    return _unique_sorted([p for p in points if p > lo_i], min_gap=50.0)[:n]
 
 
 def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
-    """Build RPM breakpoints with a 2:1 dense:sparse budget.
-
-    Dense zone: above idle-pocket upper → peak torque (mech climb).
-    Sparse zone: peak torque → overspeed (hold / soft later).
-    Anchors always try to keep: cranking, idle, pocket upper, peak torque,
-    redline, overspeed.
-    """
     if count < 2:
         raise ValueError("axis count must be >= 2")
 
@@ -70,65 +68,93 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
     overspeed = redline + 1000.0
     cranking = 300.0
 
-    # Ensure pocket_hi is past idle so "out of idle" is a real edge
     if pocket_hi <= idle:
         pocket_hi = idle + 100.0
-    if tq <= pocket_hi + 50:
-        # degenerate engine numbers — fall back to idle→tq dense
+    if tq <= pocket_hi + 100:
         pocket_hi = idle + max(50.0, (tq - idle) * 0.1)
 
-    anchors = _unique_sorted([cranking, idle, pocket_hi, tq, redline, overspeed])
+    low = _unique_sorted([cranking, idle, pocket_hi], min_gap=50.0)
 
-    # If too many anchors for the table, keep the essentials first
-    if len(anchors) >= count:
-        essential = _unique_sorted([cranking, idle, tq, redline, overspeed])
-        if len(essential) >= count:
-            # extreme small tables
-            pick = [cranking, idle, tq, overspeed]
-            return _unique_sorted(pick)[:count]
-        # drop pocket_hi / extras until we fit
-        while len(anchors) > count:
-            # drop the least critical interior anchor (pocket_hi first if present)
-            drop_candidates = [v for v in anchors if v not in {cranking, idle, tq, redline, overspeed}]
-            if not drop_candidates:
-                anchors = essential[:count]
+    if len(low) >= count:
+        return _unique_sorted([cranking, idle, tq, overspeed], min_gap=50.0)[:count]
+
+    remaining = count - len(low)
+    # 2:1 whole-zone budget (includes zone endpoints)
+    dense_n = max(1, (remaining * 2) // 3)  # (pocket_hi, tq]
+    sparse_n = max(1, remaining - dense_n)  # (tq, overspeed]
+    if dense_n + sparse_n > remaining:
+        sparse_n = remaining - dense_n
+
+    dense = _even_inclusive_end(pocket_hi, tq, dense_n)
+
+    # Sparse zone: always try to keep redline + overspeed, fill the rest evenly
+    sparse_ compulsory = _unique_sorted([redline, overspeed], min_gap=50.0)
+    sparse_compulsory = [v for v in sparse_compulsory if v > tq]
+    if len(sparse_compulsory) >= sparse_n:
+        # keep overspeed, then redline
+        sparse = _unique_sorted([redline, overspeed], min_gap=50.0)
+        sparse = [v for v in sparse if v > tq][-sparse_n:]
+    else:
+        fill = sparse_n - len(sparse_compulsory)
+        mids = []
+        if fill > 0:
+            # points in (tq, redline) preferentially
+            top = redline if redline > tq + 50 else overspeed
+            mids = _even_inclusive_end(tq, top, fill + (1 if top not in sparse_compulsory else 0))
+            mids = [v for v in mids if v not in sparse_compulsory and v > tq]
+            # if we accidentally included top and it's compulsory, drop dup
+            mids = mids[:fill]
+        sparse = _unique_sorted(mids + sparse_compulsory, min_gap=75.0)
+        # trim/pad to sparse_n
+        while len(sparse) > sparse_n:
+            # drop the point closest to a neighbor (keep redline/overspeed)
+            protected = { _as_int(redline), _as_int(overspeed) }
+            droppable = [v for v in sparse if v not in protected]
+            if not droppable:
+                sparse = sparse[:sparse_n]
                 break
-            anchors.remove(max(drop_candidates))  # drop highest non-essential (usually overspeed neighbor)
-            # actually drop pocket_hi preferentially
-            if pocket_hi in anchors and len(anchors) > count:
-                anchors = [v for v in anchors if v != _as_int(pocket_hi)]
-                anchors = _unique_sorted(anchors)
-        return anchors[:count]
+            # drop first mid
+            sparse = [v for v in sparse if v != droppable[0]]
+        guard = 0
+        while len(sparse) < sparse_n and guard < 20:
+            guard += 1
+            # split largest gap in (tq, overspeed]
+            seq = _unique_sorted([tq] + sparse + [overspeed], min_gap=1.0)
+            best = None
+            best_span = 0.0
+            for i in range(len(seq) - 1):
+                span = seq[i + 1] - seq[i]
+                if span > best_span:
+                    best_span = span
+                    best = i
+            if best is None or best_span < 100:
+                sparse.append(sparse[-1] + 100 if sparse else tq + 100)
+            else:
+                mid = _as_int((seq[best] + seq[best + 1]) / 2.0)
+                if mid > tq:
+                    sparse.append(mid)
+            sparse = _unique_sorted([v for v in sparse if v > tq], min_gap=75.0)
 
-    remaining = count - len(anchors)
-    # 2:1 — dense (pocket_hi → tq) : sparse (tq → overspeed)
-    dense_slots = (remaining * 2) // 3
-    sparse_slots = remaining - dense_slots
+    axis = _unique_sorted(low + dense + sparse, min_gap=50.0)
 
-    dense = _even_interior(pocket_hi, tq, dense_slots)
-    sparse = _even_interior(tq, overspeed, sparse_slots)
-
-    axis = _unique_sorted(anchors + dense + sparse)
-
-    # Top up if dedupe ate slots — prefer dense zone
+    # Final pad / trim to exact count — prefer dense zone
     guard = 0
-    while len(axis) < count and guard < 50:
+    while len(axis) < count and guard < 40:
         guard += 1
-        # find largest gap in dense zone first
         best_i = None
         best_score = -1.0
         for i in range(len(axis) - 1):
             lo, hi = axis[i], axis[i + 1]
             span = hi - lo
-            if span < 2:
+            if span < 100:
                 continue
             mid = (lo + hi) / 2.0
-            if pocket_hi <= mid <= tq:
+            if pocket_hi < mid <= tq:
                 score = span * 3.0
             elif mid > tq:
                 score = span * 1.0
             else:
-                score = span * 0.25
+                score = span * 0.2
             if score > best_score:
                 best_score = score
                 best_i = i
@@ -136,11 +162,27 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
             axis.append(axis[-1] + 100)
         else:
             mid = _as_int((axis[best_i] + axis[best_i + 1]) / 2.0)
-            if mid <= axis[best_i] or mid >= axis[best_i + 1]:
-                axis.append(axis[-1] + 100)
-            else:
-                axis.insert(best_i + 1, mid)
-        axis = _unique_sorted(axis)
+            axis.insert(best_i + 1, mid)
+        axis = _unique_sorted(axis, min_gap=50.0)
+
+    if len(axis) > count:
+        # drop from sparse zone first (not redline/overspeed/tq/idle/cranking)
+        protected = {
+            _as_int(cranking),
+            _as_int(idle),
+            _as_int(pocket_hi),
+            _as_int(tq),
+            _as_int(redline),
+            _as_int(overspeed),
+        }
+        while len(axis) > count:
+            droppable = [v for v in axis if v not in protected and v > tq]
+            if not droppable:
+                droppable = [v for v in axis if v not in protected]
+            if not droppable:
+                axis = axis[:count]
+                break
+            axis.remove(droppable[0])
 
     return axis[:count]
 
@@ -150,11 +192,11 @@ def describe_rpm_axis(spec: EngineSpec, axis: list[float]) -> str:
     half = spec.idle_pocket_width / 2.0
     pocket_hi = idle + half
     tq = spec.peak_torque_rpm
-    dense = sum(1 for x in axis if pocket_hi < x < tq)
+    dense = sum(1 for x in axis if pocket_hi < x <= tq)
     sparse = sum(1 for x in axis if x > tq)
     return (
-        f"RPM axis {len(axis)} cols — dense above pocket→peak TQ: {dense} interiors, "
-        f"after peak TQ: {sparse} (target ~2:1 interiors)"
+        f"RPM axis {len(axis)} cols — climb (above pocket→peak TQ): {dense}, "
+        f"after peak TQ: {sparse} (budget 2:1)"
     )
 
 
@@ -194,7 +236,6 @@ def load_landmarks_inhg(spec: EngineSpec) -> list[Landmark]:
 
 
 def select_axis(landmarks: list[Landmark], count: int) -> list[float]:
-    """Legacy priority picker — used for load axes."""
     if count < 2:
         raise ValueError("axis count must be >= 2")
 
