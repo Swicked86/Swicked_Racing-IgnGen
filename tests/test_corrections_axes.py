@@ -1,5 +1,5 @@
 from igngen.axes import generate_load_axis, generate_rpm_axis
-from igngen.model import EngineSpec, pressure_correction, timing_at
+from igngen.model import EngineSpec, timing_at
 from igngen.table import TimingTable
 
 
@@ -15,24 +15,28 @@ def test_axes_are_whole_numbers():
         assert 100 in load or any(abs(x - 100) < 0.5 for x in load)
 
 
-def test_vacuum_and_boost_step_limits():
+def test_vacuum_and_boost_limits_are_total_timing():
     spec = EngineSpec(
-        vacuum_advance_per_kpa=0.5,
-        vacuum_advance_max=10,
-        boost_retard_per_psi=2.0,
-        boost_retard_max=8,
+        base_timing=15,
+        vacuum_advance_per_kpa=2.0,
+        vacuum_advance_max=40,
+        boost_retard_per_psi=3.0,
+        boost_retard_max=12,
         atm_kpa=100,
+        idle_pocket_width=0,
+        soft_limit_retard=0,
     )
-    # 20 kPa below atm → 10° advance, hit limit
-    assert pressure_correction(80, spec) == 10.0
-    # 4 psi over → 8° retard, hit limit
-    over = 100 + 4 * 6.895
-    assert pressure_correction(over, spec) == -8.0
-    # small vacuum not at limit
-    assert abs(pressure_correction(96, spec) - 2.0) < 1e-9
+    # Deep vacuum: step would overshoot; clamp to total vacuum limit
+    assert timing_at(4800, 40, spec) == 40
+    # Mild vacuum: below total limit → mechanical + step
+    mild = timing_at(1100, 96, spec)  # 4 kPa below → +8° on base 15 = 23
+    assert mild == 23
+    # Boost: step would go under floor; clamp to total boost limit
+    over = 100 + 10 * 6.895  # 10 psi
+    assert timing_at(4800, over, spec) == 12
 
 
-def test_swicked_view_low_load_first():
+def test_swicked_view_bottom_left_origin():
     table = TimingTable(
         rpm=[1000.0, 2000.0],
         load=[40.0, 100.0],
@@ -40,15 +44,21 @@ def test_swicked_view_low_load_first():
         load_unit="kPa",
     )
     text = table.format_grid(layout="swicked", color=False)
-    lines = [ln for ln in text.splitlines() if ln and not ln.startswith("-") and not ln.startswith("Load") and not ln.startswith("RPM")]
-    # first data row after header should be load 40
-    assert "40" in lines[0].split()[0] or lines[0].strip().startswith("40")
+    lines = text.splitlines()
+    # First data row is high load (100); last data row before rpm axis is low (40)
+    data = [ln for ln in lines if ln.strip()[:1].isdigit()]
+    assert data[0].lstrip().startswith("100")
+    assert data[-1].lstrip().startswith("40")
+    # RPM labels on the bottom
+    assert any(ln.strip().startswith("rpm") for ln in lines)
+    assert lines[-1].strip().startswith("RPM")
+    rpm_line = next(ln for ln in lines if ln.strip().startswith("rpm"))
+    assert "1000" in rpm_line and "2000" in rpm_line
 
 
 def test_idle_pocket_width_affects_timing():
     wide = EngineSpec(idle_rpm=1100, idle_pocket_width=400, base_timing=15)
     narrow = EngineSpec(idle_rpm=1100, idle_pocket_width=100, base_timing=15)
-    # 200 RPM off idle: inside wide pocket, outside narrow
     t_wide = timing_at(1300, 45, wide)
     t_narrow = timing_at(1300, 45, narrow)
     assert t_wide != t_narrow

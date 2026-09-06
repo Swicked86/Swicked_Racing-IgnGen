@@ -40,9 +40,9 @@ def prompt_engine_spec() -> EngineSpec:
     print("\n— Ignition corrections —")
     idle_pocket_width = _ask("Idle pocket width (±RPM total span)", 250, cast=int)
     vacuum_advance_per_kpa = _ask("Vacuum advance step (° per kPa below atm)", 0.35, cast=float)
-    vacuum_advance_max = _ask("Vacuum advance limit (°)", 18, cast=int)
+    vacuum_advance_max = _ask("Vacuum timing limit (total ° max)", 42, cast=int)
     boost_retard_per_psi = _ask("Boost retard step (° per psi)", 1.5, cast=float)
-    boost_retard_max = _ask("Boost retard limit (°)", 12, cast=int)
+    boost_retard_max = _ask("Boost timing limit (total ° min)", 10, cast=int)
     print()
     return EngineSpec(
         displacement_cc=float(displacement_cc),

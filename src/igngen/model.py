@@ -1,7 +1,8 @@
 """Ignition surface model from Swicked Racing research notes.
 
-Vacuum advance and boost retard are asymmetric, each with its own
-step (° per kPa or per psi) and limit.
+Vacuum advance and boost retard are asymmetric. Steps control how fast
+timing moves with MAP; limits are absolute total timing (° BTDC), not
+add/subtract amounts.
 """
 
 from __future__ import annotations
@@ -28,12 +29,12 @@ class EngineSpec:
     idle_pocket_width: float = 250.0
     soft_limit_rpm_before_redline: float = 500.0
     soft_limit_retard: float = 10.0
-    # Vacuum advance: degrees added per kPa below atmosphere, capped
+    # Vacuum: ° added per kPa below atm; vacuum_advance_max = total ° ceiling
     vacuum_advance_per_kpa: float = 0.35
-    vacuum_advance_max: float = 18.0
-    # Boost retard: degrees removed per psi above atmosphere, capped
+    vacuum_advance_max: float = 42.0
+    # Boost: ° removed per psi above atm; boost_retard_max = total ° floor
     boost_retard_per_psi: float = 1.5
-    boost_retard_max: float = 12.0
+    boost_retard_max: float = 10.0
     map_floor: float = 0.0
     map_ceiling: float = 50.0
     normal_min: float = 8.0
@@ -66,16 +67,18 @@ def mechanical_advance(rpm: float, spec: EngineSpec) -> float:
     return hp_target
 
 
-def pressure_correction(map_kpa: float, spec: EngineSpec) -> float:
-    """Asymmetric vacuum advance / boost retard with configurable step + limit."""
+def pressure_delta(map_kpa: float, spec: EngineSpec) -> float:
+    """Uncapped MAP step only (°). Limits are applied as total timing in timing_at."""
     atm = spec.atm_kpa
     if map_kpa <= atm:
-        below = atm - map_kpa
-        adv = below * spec.vacuum_advance_per_kpa
-        return min(spec.vacuum_advance_max, adv)
+        return (atm - map_kpa) * spec.vacuum_advance_per_kpa
     over_psi = (map_kpa - atm) / KPA_PER_PSI
-    retard = over_psi * spec.boost_retard_per_psi
-    return -min(spec.boost_retard_max, retard)
+    return -over_psi * spec.boost_retard_per_psi
+
+
+def pressure_correction(map_kpa: float, spec: EngineSpec) -> float:
+    """Backward-compatible name: MAP step delta (limits are total ° in timing_at)."""
+    return pressure_delta(map_kpa, spec)
 
 
 def idle_pocket_correction(rpm: float, map_kpa: float, spec: EngineSpec) -> float:
@@ -85,7 +88,6 @@ def idle_pocket_correction(rpm: float, map_kpa: float, spec: EngineSpec) -> floa
     if map_kpa > 60.0:
         return 0.0
     delta_rpm = rpm - spec.idle_rpm
-    # ±4° across pocket half-width (strong enough to "fall in")
     return -4.0 * (delta_rpm / half)
 
 
@@ -100,19 +102,34 @@ def soft_limit_correction(rpm: float, spec: EngineSpec) -> float:
 
 
 def timing_at(rpm: float, map_kpa: float, spec: EngineSpec) -> int:
+    mech = mechanical_advance(rpm, spec)
     value = (
-        mechanical_advance(rpm, spec)
-        + pressure_correction(map_kpa, spec)
+        mech
+        + pressure_delta(map_kpa, spec)
         + idle_pocket_correction(rpm, map_kpa, spec)
-        + soft_limit_correction(rpm, spec)
     )
+    atm = spec.atm_kpa
+    # Limits are absolute total timing, not add/subtract caps
+    if map_kpa < atm:
+        value = min(value, spec.vacuum_advance_max)
+    elif map_kpa > atm:
+        value = max(value, spec.boost_retard_max)
+
+    value += soft_limit_correction(rpm, spec)
+
     in_idle_pocket = (
         abs(rpm - spec.idle_rpm) <= spec.idle_pocket_width / 2.0 and map_kpa <= 60.0
     )
     floor = spec.map_floor if in_idle_pocket else max(spec.map_floor, spec.normal_min)
-    if soft_limit_correction(rpm, spec) < 0 or map_kpa > spec.atm_kpa:
-        floor = spec.map_floor
-    clamped = min(spec.map_ceiling, max(floor, value))
+    if soft_limit_correction(rpm, spec) < 0 or map_kpa > atm:
+        # boost / soft-limit may go below normal_min; still honor boost total floor
+        # unless soft limit is pulling further down for overspeed
+        if map_kpa > atm and soft_limit_correction(rpm, spec) >= 0:
+            floor = max(spec.map_floor, spec.boost_retard_max)
+        else:
+            floor = spec.map_floor
+    ceiling = max(spec.map_ceiling, spec.vacuum_advance_max)
+    clamped = min(ceiling, max(floor, value))
     return int(round(clamped))
 
 
@@ -124,7 +141,6 @@ def generate_table(
     load_unit: str = "inhg",
 ) -> TimingTable:
     spec = spec or EngineSpec()
-    # Whole-number axis labels
     rpm_i = [float(int(round(r))) for r in rpm]
     load_i = [float(int(round(v))) for v in load]
     values: list[list[float]] = []

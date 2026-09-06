@@ -28,7 +28,6 @@ class TimingTable:
         for row in self.values:
             if len(row) != len(self.load):
                 raise ValueError("each values row must match load count")
-        # Whole numbers for axes and cells
         self.rpm = [float(int(round(r))) for r in self.rpm]
         self.load = [float(int(round(v))) for v in self.load]
         self.values = [[float(int(round(c))) for c in row] for row in self.values]
@@ -69,9 +68,8 @@ class TimingTable:
     ) -> str:
         """Render a terminal heatmap.
 
-        ``swicked`` / base: RPM → ; Load printed low→high top-to-bottom so the
-        bottom-left cell is min RPM × min load (origin). High load sits at the
-        bottom of the terminal (right-side-up map floor).
+        ``swicked`` / base: bottom-left origin — high load at top, low load at
+        bottom, RPM labels on the bottom row, RPM → right.
         ``alpha``: RPM ↓ rows, Load → columns — top-left origin.
         """
         if layout in {"alpha", "alphalink"}:
@@ -106,10 +104,11 @@ class TimingTable:
         return "\n".join(lines)
 
     def _format_swicked(self, *, precision: int, color: bool) -> str:
-        # Print load ascending top→bottom so bottom-left = min load × min RPM
-        hdr = ["load"] + [_fmt(x, 0) for x in self.rpm]
-        widths = [max(len("load"), 6)] + [max(4, len(h)) for h in hdr[1:]]
-        load_order = list(range(len(self.load)))  # low load at top of screen
+        # High load at top, low load at bottom; RPM axis along the bottom
+        rpm_hdr = [""] + [_fmt(x, 0) for x in self.rpm]
+        widths = [max(len("load"), 6)] + [max(4, len(h)) for h in rpm_hdr[1:]]
+        # high → low down the screen so bottom-left = min load × min RPM
+        load_order = list(range(len(self.load) - 1, -1, -1))
         for j in load_order:
             widths[0] = max(widths[0], len(_fmt(self.load[j], 0)))
             for i in range(len(self.rpm)):
@@ -119,9 +118,7 @@ class TimingTable:
             return "  ".join(c.rjust(widths[i]) for i, c in enumerate(cols))
 
         lines = [
-            "Load (low→high down)   origin bottom-left = last row, first col",
-            plain_row(hdr),
-            plain_row(["-" * w for w in widths]),
+            "Load ↑   origin bottom-left (low load × low RPM)",
         ]
         for j in load_order:
             padded = [_fmt(self.load[j], 0).rjust(widths[0])]
@@ -132,6 +129,8 @@ class TimingTable:
                 pad = widths[i + 1] - len(plain)
                 padded.append((" " * pad) + colored)
             lines.append("  ".join(padded))
+        lines.append(plain_row(["-" * w for w in widths]))
+        lines.append(plain_row(["rpm"] + [_fmt(x, 0) for x in self.rpm]))
         lines.append("RPM →")
         return "\n".join(lines)
 
