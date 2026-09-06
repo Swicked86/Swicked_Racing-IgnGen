@@ -68,10 +68,9 @@ def _apply_cli_overrides(spec: EngineSpec, args: argparse.Namespace) -> EngineSp
         spec.mech_timing_at_peak_torque = float(args.mech_at_peak_torque)
     if args.idle_rpm is not None:
         spec.idle_rpm = float(args.idle_rpm)
-    if getattr(args, "vacuum_advance", None) is not None:
-        spec.vacuum_advance = float(args.vacuum_advance)
-    if getattr(args, "vacuum_max", None) is not None:
-        spec.vacuum_advance_max = float(args.vacuum_max)
+    if getattr(args, "vacuum_total", None) is not None:
+        spec.vacuum_total_timing = float(args.vacuum_total)
+        spec.vacuum_advance_max = float(args.vacuum_total)
     return spec
 
 
@@ -110,8 +109,12 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument("--base-timing", type=int, default=None)
     p_new.add_argument("--mech-at-peak-torque", type=int, default=None)
     p_new.add_argument("--idle-rpm", type=int, default=None)
-    p_new.add_argument("--vacuum-advance", type=int, default=None, help="Full vacuum add ° (≤50 kPa)")
-    p_new.add_argument("--vacuum-max", type=int, default=None, help="Total ° ceiling under vacuum")
+    p_new.add_argument(
+        "--vacuum-total",
+        type=int,
+        default=None,
+        help="Total timing ° at full vacuum (≤40 kPa)",
+    )
     p_new.add_argument("--peak-torque-rpm", type=int, default=None)
     p_new.add_argument("--peak-hp", type=float, default=None)
     p_new.add_argument("--peak-hp-rpm", type=int, default=None)
@@ -261,15 +264,16 @@ def main(argv: list[str] | None = None) -> int:
                             args.mech_at_peak_torque or 32
                         ),
                         idle_rpm=float(args.idle_rpm or 1100),
-                        vacuum_advance=float(
-                            args.vacuum_advance
-                            if getattr(args, "vacuum_advance", None) is not None
-                            else 10
+                        vacuum_total_timing=float(
+                            args.vacuum_total
+                            if getattr(args, "vacuum_total", None) is not None
+                            else 50
                         ),
+                        vacuum_full_map_kpa=40.0,
                         vacuum_advance_max=float(
-                            args.vacuum_max
-                            if getattr(args, "vacuum_max", None) is not None
-                            else 42
+                            args.vacuum_total
+                            if getattr(args, "vacuum_total", None) is not None
+                            else 50
                         ),
                     )
                 for warning in validate_power(spec):
