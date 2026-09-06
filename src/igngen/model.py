@@ -5,6 +5,7 @@ Pipeline:
   → idle pocket → soft redline retard → safety bounds
 
 Pressure correction is asymmetric: vacuum advance ≠ mirrored boost retard.
+Timing cells are whole degrees only.
 """
 
 from __future__ import annotations
@@ -39,23 +40,18 @@ class EngineSpec:
 def validate_power(spec: EngineSpec) -> list[str]:
     """Return human-readable consistency warnings (empty if OK)."""
     warnings: list[str] = []
-    hp_from_tq = (spec.peak_torque_lbft * spec.peak_torque_rpm) / 5252.0
     tq_at_hp = (spec.peak_hp * 5252.0) / max(spec.peak_hp_rpm, 1.0)
     if tq_at_hp > spec.peak_torque_lbft * 1.02:
         warnings.append(
             "Peak HP implies more torque at HP RPM than stated peak torque "
             f"(~{tq_at_hp:.0f} lb-ft needed vs {spec.peak_torque_lbft:.0f} given)."
         )
-    if abs(hp_from_tq - (spec.peak_torque_lbft * spec.peak_torque_rpm / 5252.0)) < 0:
-        pass
-    _ = hp_from_tq
     return warnings
 
 
 def mechanical_advance(rpm: float, spec: EngineSpec) -> float:
     """RPM advance curve anchored at idle base and peak-torque WOT."""
     base = spec.base_timing
-    # Target ~30° at peak-torque RPM (research default for 4-valve), then climb slowly.
     tq_target = 30.0
     hp_target = 33.0
     if rpm <= spec.idle_rpm:
@@ -66,7 +62,6 @@ def mechanical_advance(rpm: float, spec: EngineSpec) -> float:
     if rpm <= spec.peak_hp_rpm:
         t = (rpm - spec.peak_torque_rpm) / max(spec.peak_hp_rpm - spec.peak_torque_rpm, 1.0)
         return tq_target + (hp_target - tq_target) * _smoothstep(t)
-    # Past HP peak, mostly flat until soft limit region
     return hp_target
 
 
@@ -74,11 +69,9 @@ def pressure_correction(map_kpa: float, spec: EngineSpec) -> float:
     """Asymmetric vacuum advance / boost retard around atmosphere."""
     atm = spec.atm_kpa
     if map_kpa <= atm:
-        # 0 at atm → +vacuum_advance_max near ~30–40 kPa
         span = max(atm - 35.0, 1.0)
         t = min(1.0, max(0.0, (atm - map_kpa) / span))
         return spec.vacuum_advance_max * _smoothstep(t)
-    # Boost retard: milder than mirrored vacuum
     over = map_kpa - atm
     return -(over / 10.0) * spec.boost_retard_per_10kpa
 
@@ -88,13 +81,9 @@ def idle_pocket_correction(rpm: float, map_kpa: float, spec: EngineSpec) -> floa
     half = spec.idle_pocket_width / 2.0
     if abs(rpm - spec.idle_rpm) > half:
         return 0.0
-    # Only bite at light load (roughly idle MAP band)
     if map_kpa > 55.0:
         return 0.0
-    # Below target idle → add timing; above → retard
-    # Gentler than the original 15°/100RPM idea to reduce hunt.
     delta_rpm = rpm - spec.idle_rpm
-    # ±5° across the pocket half-width
     return -5.0 * (delta_rpm / max(half, 1.0))
 
 
@@ -108,14 +97,15 @@ def soft_limit_correction(rpm: float, spec: EngineSpec) -> float:
     return -spec.soft_limit_retard * _smoothstep(t)
 
 
-def timing_at(rpm: float, map_kpa: float, spec: EngineSpec) -> float:
+def timing_at(rpm: float, map_kpa: float, spec: EngineSpec) -> int:
     value = (
         mechanical_advance(rpm, spec)
         + pressure_correction(map_kpa, spec)
         + idle_pocket_correction(rpm, map_kpa, spec)
         + soft_limit_correction(rpm, spec)
     )
-    return min(spec.map_ceiling, max(spec.map_floor, value))
+    clamped = min(spec.map_ceiling, max(spec.map_floor, value))
+    return int(round(clamped))
 
 
 def generate_table(
@@ -127,20 +117,19 @@ def generate_table(
 ) -> TimingTable:
     """Fill an RPM×load grid using the research model.
 
-    ``load_unit``:
-      - ``inhg``: ALPHAlink-style gauge inHg (0≈atm)
-      - ``kpa``: absolute kPa
+    Timing cells are whole degrees BTDC.
+    ``load_unit``: ``inhg`` (ALPHAlink gauge) or ``kpa`` (absolute).
     """
     spec = spec or EngineSpec()
     values: list[list[float]] = []
     for r in rpm:
         row: list[float] = []
         for load_v in load:
-            if load_unit.lower() in {"inhg", "inHg".lower(), "inhg_gauge"}:
+            if load_unit.lower() in {"inhg", "inhg_gauge"}:
                 map_kpa = inhg_gauge_to_kpa_abs(load_v, spec.atm_kpa)
             else:
                 map_kpa = float(load_v)
-            row.append(round(timing_at(r, map_kpa, spec), 2))
+            row.append(float(timing_at(r, map_kpa, spec)))
         values.append(row)
     return TimingTable(rpm=list(rpm), load=list(load), values=values)
 

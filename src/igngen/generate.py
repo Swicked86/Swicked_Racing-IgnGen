@@ -15,16 +15,7 @@ def generate_baseline(
     minimum: float = 0.0,
     maximum: float = 45.0,
 ) -> TimingTable:
-    """Build a simple RPM×load ignition map from tuner targets.
-
-    Load blend (by position across the load axis):
-    - first third → idle
-    - middle third → cruise
-    - last third → WOT
-    with linear crossfades between regions.
-
-    RPM curve adds ``rpm_slope`` degrees per 1000 RPM above ``rpm_base``.
-    """
+    """Simple idle/cruise/WOT blend (legacy). Whole degrees only."""
     if not rpm or not load:
         raise ValueError("rpm and load breakpoints required")
 
@@ -37,7 +28,7 @@ def generate_baseline(
             t = j / max(n - 1, 1)
             base = _blend_load_targets(t, idle=idle, cruise=cruise, wot=wot)
             cell = min(maximum, max(minimum, base + rpm_add))
-            row.append(round(cell, 2))
+            row.append(float(int(round(cell))))
         values.append(row)
 
     return TimingTable(rpm=list(rpm), load=list(load), values=values)
@@ -50,17 +41,13 @@ def _blend_load_targets(
     cruise: float,
     wot: float,
 ) -> float:
-    """t in [0, 1] across load axis."""
     t = min(1.0, max(0.0, t))
     if t <= 0.33:
-        # idle → cruise
         u = t / 0.33 if 0.33 else 0.0
         return idle + (cruise - idle) * u
     if t <= 0.66:
-        # cruise plateau toward WOT start
         u = (t - 0.33) / 0.33
         return cruise + (wot - cruise) * (u * 0.35)
-    # cruise/wot → full WOT
     u = (t - 0.66) / 0.34
     mid = cruise + (wot - cruise) * 0.35
     return mid + (wot - mid) * u

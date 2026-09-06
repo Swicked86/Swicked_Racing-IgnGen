@@ -7,15 +7,16 @@ def test_alphalink_preset_shape():
     assert len(preset.rpm) == 20
     assert len(preset.load) == 16
     assert preset.load_unit == "inHg"
-    # atmospheric crossover near 0 inHg should exist in the axis neighborhood
     assert any(abs(x) < 5 for x in preset.load)
 
 
-def test_research_model_fills_preset():
+def test_research_model_whole_degrees():
     preset = get_preset("alphalink-high-cam")
     table = generate_table(list(preset.rpm), list(preset.load), load_unit="inhg")
     assert table.shape == (20, 16)
-    # boost columns should generally be lower advance than deep vacuum at same RPM
+    for row in table.values:
+        for cell in row:
+            assert float(cell).is_integer()
     mid = len(preset.rpm) // 2
     assert table.values[mid][0] > table.values[mid][-1]
 
