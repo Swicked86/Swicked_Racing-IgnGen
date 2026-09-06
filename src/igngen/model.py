@@ -81,13 +81,42 @@ def mechanical_advance(rpm: float, spec: EngineSpec) -> float:
 
 
 
-def vacuum_advance(map_kpa: float, spec: EngineSpec) -> float:
-    """Legacy additive helper — prefer vacuum_total_timing / cell taper.
+def mechanical_progress(rpm: float, spec: EngineSpec) -> float:
+    """Normalized mechanical-advance progress: 0 at/below idle, 1 at/above peak torque.
 
-    Kept for older tests: add = total - peak mech (approx).
+    Same schedule as ``mechanical_advance`` (linear idle → peak-torque RPM).
     """
-    add = max(0.0, float(spec.vacuum_total_timing) - float(spec.mech_timing_at_peak_torque))
-    if spec.vacuum_advance and spec.vacuum_advance != 10.0 and add == 0:
+    idle = max(spec.idle_rpm, 1.0)
+    peak_rpm = float(spec.peak_torque_rpm)
+    if rpm <= idle:
+        return 0.0
+    if rpm >= peak_rpm:
+        return 1.0
+    return (rpm - idle) / max(peak_rpm - idle, 1.0)
+
+
+def vacuum_add_full(spec: EngineSpec) -> float:
+    """Max vacuum add (°): total timing at ≤40 kPa minus full mechanical."""
+    return max(
+        0.0,
+        float(spec.vacuum_total_timing) - float(spec.mech_timing_at_peak_torque),
+    )
+
+
+def vacuum_add_at_rpm(rpm: float, spec: EngineSpec) -> float:
+    """Available vacuum add at this RPM — full add × mechanical progress."""
+    return vacuum_add_full(spec) * mechanical_progress(rpm, spec)
+
+
+def vacuum_high_at_rpm(rpm: float, spec: EngineSpec) -> float:
+    """Timing at ≤40 kPa: master (100 kPa) curve + scaled vacuum add."""
+    return mechanical_advance(rpm, spec) + vacuum_add_at_rpm(rpm, spec)
+
+
+def vacuum_advance(map_kpa: float, spec: EngineSpec) -> float:
+    """Legacy MAP-only full-add helper (assumes mechanical is all-in)."""
+    add = vacuum_add_full(spec)
+    if spec.vacuum_advance and abs(spec.vacuum_advance - 10.0) > 1e-9 and add == 0:
         add = float(spec.vacuum_advance)
     full_at = spec.vacuum_full_map_kpa
     atm = spec.atm_kpa
@@ -105,27 +134,28 @@ def _pocket_hi_rpm(spec: EngineSpec) -> float:
 
 
 def vacuum_full_in_rpm(spec: EngineSpec) -> float:
-    """RPM at which vacuum total timing is fully applied (above idle pocket)."""
+    """RPM where vacuum reaches its max add (= peak-torque RPM)."""
     if spec.vacuum_full_rpm and spec.vacuum_full_rpm > 0:
         return float(spec.vacuum_full_rpm)
-    pocket_hi = _pocket_hi_rpm(spec)
-    return pocket_hi + max(800.0, float(spec.idle_rpm) * 0.75)
+    return float(spec.peak_torque_rpm)
 
 
 def vacuum_rpm_scale(rpm: float, spec: EngineSpec) -> float:
-    """0 through the idle pocket; linear to 1 by vacuum_full_in_rpm."""
-    pocket_hi = _pocket_hi_rpm(spec)
-    full_at = vacuum_full_in_rpm(spec)
-    if rpm <= pocket_hi:
-        return 0.0
-    if rpm >= full_at:
-        return 1.0
-    return (rpm - pocket_hi) / max(full_at - pocket_hi, 1.0)
+    """Alias for mechanical_progress (vacuum fans with the master curve)."""
+    return mechanical_progress(rpm, spec)
 
 
 def vacuum_advance_at(rpm: float, map_kpa: float, spec: EngineSpec) -> float:
-    """Legacy additive path (RPM-gated). Table gen uses cell taper instead."""
-    return vacuum_advance(map_kpa, spec) * vacuum_rpm_scale(rpm, spec)
+    """MAP taper of the RPM-scaled vacuum add."""
+    add = vacuum_add_at_rpm(rpm, spec)
+    full_at = spec.vacuum_full_map_kpa
+    atm = spec.atm_kpa
+    if map_kpa >= atm:
+        return 0.0
+    if map_kpa <= full_at:
+        return add
+    t = (map_kpa - full_at) / max(atm - full_at, 1.0)
+    return add * (1.0 - t)
 
 
 def _whole_degree_taper(high: int, low: int, n_mid: int) -> list[int]:
@@ -157,18 +187,17 @@ def vacuum_row_timings(
 ) -> list[int]:
     """Whole-degree vacuum-layer timings for one RPM across load breakpoints.
 
-    - Idle pocket (RPM gate): mechanical only
-    - MAP ≤ 40 kPa: vacuum_total_timing (blended by RPM ramp)
-    - MAP ≥ atm: mechanical
+    The 100 kPa (atmosphere) row is the master mechanical RPM curve.
+    Vacuum fans outward from that curve: available add =
+    (total_timing − peak_mech) × mechanical_progress(rpm).
+    Max total (e.g. 50° at ≤40 kPa) only when mechanical is all-in.
+
+    - MAP ≥ atm: mechanical (master)
+    - MAP ≤ 40 kPa: mechanical + scaled vacuum add
     - Between: whole° staircase across those load cells
     """
     mech = int(round(mechanical_advance(rpm, spec)))
-    scale = vacuum_rpm_scale(rpm, spec)
-    if scale <= 0.0:
-        return [mech for _ in loads_kpa]
-
-    total = int(round(float(spec.vacuum_total_timing)))
-    high = int(round(mech + (total - mech) * scale))
+    high = int(round(vacuum_high_at_rpm(rpm, spec)))
     full_at = float(spec.vacuum_full_map_kpa)
     atm = float(spec.atm_kpa)
 
@@ -182,7 +211,6 @@ def vacuum_row_timings(
     for i in atm_idxs:
         out[i] = mech
     mids = _whole_degree_taper(high, mech, len(mid_idxs))
-    # mid_idxs are in ascending load order already if loads sorted low→high
     for i, idx in enumerate(mid_idxs):
         out[idx] = mids[i] if i < len(mids) else mech
     return out
@@ -197,12 +225,12 @@ def describe_mechanical_curve(spec: EngineSpec) -> str:
 
 
 def describe_vacuum_curve(spec: EngineSpec) -> str:
-    pocket_hi = _pocket_hi_rpm(spec)
-    full_rpm = vacuum_full_in_rpm(spec)
+    add = vacuum_add_full(spec)
     return (
-        f"Vacuum: {spec.vacuum_total_timing:.0f}° total at full vacuum, "
-        f"whole° steps across load cells to mechanical by atm; "
-        f"0° vac through idle pocket (≤{pocket_hi:.0f} RPM), full by {full_rpm:.0f} RPM"
+        f"Vacuum: fans from 100 kPa master curve; "
+        f"+{add:.0f}° max → {spec.vacuum_total_timing:.0f}° at ≤{spec.vacuum_full_map_kpa:.0f} kPa "
+        f"once mechanical is all-in ({spec.peak_torque_rpm:.0f} RPM); "
+        f"scaled by mechanical progress below that; whole° load-cell steps to atm"
     )
 
 
@@ -253,11 +281,7 @@ def timing_at(
 
     if layers == "vacuum":
         # Single-point approx (tables use vacuum_row_timings for whole° cells)
-        scale = vacuum_rpm_scale(rpm, spec)
-        if scale <= 0.0:
-            return int(round(max(0.0, mech)))
-        total = float(spec.vacuum_total_timing)
-        high = mech + (total - mech) * scale
+        high = vacuum_high_at_rpm(rpm, spec)
         full_at = float(spec.vacuum_full_map_kpa)
         atm = float(spec.atm_kpa)
         if map_kpa <= full_at:
