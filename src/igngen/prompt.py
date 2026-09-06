@@ -36,12 +36,15 @@ def prompt_engine_spec(*, layers: LayerName = "mechanical") -> EngineSpec:
     redline_rpm = _ask("Redline / max RPM", 9300, cast=int)
     boost_psi = _ask("Max boost (psi, 0 = NA)", 7, cast=float)
     idle_rpm = _ask("Target idle RPM", 1100, cast=int)
+    # Pocket width shapes the RPM axis even on mechanical-only builds
+    idle_pocket_width = float(
+        _ask("Idle pocket width (total RPM span, centered on idle)", 250, cast=int)
+    )
 
     print("\n— Mechanical advance —")
     base_timing = _ask("Base / initial timing (°BTDC)", 10, cast=int)
     mech_at_tq = _ask("Total timing at peak torque (°)", 32, cast=int)
 
-    idle_pocket_width = 250.0
     vacuum_advance_per_kpa = 0.35
     vacuum_advance_max = 42.0
     boost_retard_per_psi = 1.5
@@ -49,7 +52,6 @@ def prompt_engine_spec(*, layers: LayerName = "mechanical") -> EngineSpec:
 
     if layers == "full":
         print("\n— Load / vacuum / boost (full model) —")
-        idle_pocket_width = float(_ask("Idle pocket width (±RPM total span)", 250, cast=int))
         vacuum_advance_per_kpa = float(
             _ask("Vacuum advance step (° per kPa below atm)", 0.35, cast=float)
         )

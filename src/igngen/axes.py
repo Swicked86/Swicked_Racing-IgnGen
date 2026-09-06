@@ -1,11 +1,9 @@
 """Nonlinear RPM/load axis generation.
 
-RPM columns: after low anchors (cranking, idle, pocket upper), remaining
-slots are split **2:1** by zone:
+RPM columns: low anchors always include the idle **pocket**
+(cranking, pocket lower, idle, pocket upper). Remaining slots split **2:1**:
   2 — (above idle pocket → peak torque]  (mechanical climb)
   1 — (peak torque → overspeed]          (hold / soft later)
-
-Mechanical advance starts at idle (linear); the pocket is not a freeze on the RPM curve.
 """
 
 from __future__ import annotations
@@ -56,27 +54,43 @@ def _even_inclusive_end(lo: float, hi: float, n: int) -> list[float]:
     return _unique_sorted([p for p in points if p > lo_i], min_gap=50.0)[:n]
 
 
+def _pocket_edges(spec: EngineSpec) -> tuple[float, float]:
+    """Idle pocket lower/upper RPM (total width centered on idle)."""
+    idle = float(spec.idle_rpm)
+    half = max(spec.idle_pocket_width / 2.0, 50.0)
+    pocket_lo = idle - half
+    pocket_hi = idle + half
+    # Keep pocket_lo above cranking so both edges stay distinct on the axis
+    if pocket_lo <= 300:
+        pocket_lo = 300 + max(50.0, half * 0.5)
+    if pocket_hi <= idle:
+        pocket_hi = idle + half
+    return float(pocket_lo), float(pocket_hi)
+
+
 def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
     if count < 2:
         raise ValueError("axis count must be >= 2")
 
     idle = float(spec.idle_rpm)
-    half = max(spec.idle_pocket_width / 2.0, 0.0)
-    pocket_hi = idle + half
+    pocket_lo, pocket_hi = _pocket_edges(spec)
     tq = float(spec.peak_torque_rpm)
     redline = float(spec.redline_rpm)
     overspeed = redline + 1000.0
     cranking = 300.0
 
-    if pocket_hi <= idle:
-        pocket_hi = idle + 100.0
     if tq <= pocket_hi + 100:
         pocket_hi = idle + max(50.0, (tq - idle) * 0.1)
+        pocket_lo = min(pocket_lo, idle - max(50.0, (idle - cranking) * 0.25))
 
-    low = _unique_sorted([cranking, idle, pocket_hi], min_gap=50.0)
+    # Idle pocket must appear on the RPM scale: lower edge, idle, upper edge
+    low = _unique_sorted([cranking, pocket_lo, idle, pocket_hi], min_gap=40.0)
 
     if len(low) >= count:
-        return _unique_sorted([cranking, idle, tq, overspeed], min_gap=50.0)[:count]
+        essential = _unique_sorted(
+            [cranking, pocket_lo, idle, pocket_hi, tq, overspeed], min_gap=40.0
+        )
+        return essential[:count]
 
     remaining = count - len(low)
     dense_n = max(1, (remaining * 2) // 3)  # (pocket_hi, tq]
@@ -126,7 +140,7 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
                     sparse.append(mid)
             sparse = _unique_sorted([v for v in sparse if v > tq], min_gap=75.0)
 
-    axis = _unique_sorted(low + dense + sparse, min_gap=50.0)
+    axis = _unique_sorted(low + dense + sparse, min_gap=40.0)
 
     guard = 0
     while len(axis) < count and guard < 40:
@@ -153,11 +167,12 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
         else:
             mid = _as_int((axis[best_i] + axis[best_i + 1]) / 2.0)
             axis.insert(best_i + 1, mid)
-        axis = _unique_sorted(axis, min_gap=50.0)
+        axis = _unique_sorted(axis, min_gap=40.0)
 
     if len(axis) > count:
         protected = {
             _as_int(cranking),
+            _as_int(pocket_lo),
             _as_int(idle),
             _as_int(pocket_hi),
             _as_int(tq),
@@ -177,15 +192,14 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
 
 
 def describe_rpm_axis(spec: EngineSpec, axis: list[float]) -> str:
-    idle = spec.idle_rpm
-    half = spec.idle_pocket_width / 2.0
-    pocket_hi = idle + half
+    pocket_lo, pocket_hi = _pocket_edges(spec)
     tq = spec.peak_torque_rpm
     dense = sum(1 for x in axis if pocket_hi < x <= tq)
     sparse = sum(1 for x in axis if x > tq)
     return (
-        f"RPM axis {len(axis)} cols — climb (above pocket→peak TQ): {dense}, "
-        f"after peak TQ: {sparse} (budget 2:1)"
+        f"RPM axis {len(axis)} cols — idle pocket "
+        f"{int(pocket_lo)}…{int(spec.idle_rpm)}…{int(pocket_hi)}, "
+        f"climb: {dense}, after peak TQ: {sparse} (budget 2:1)"
     )
 
 
