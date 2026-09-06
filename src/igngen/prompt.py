@@ -91,10 +91,10 @@ def prompt_engine_spec(
 
     vacuum_total_timing = float(d.vacuum_total_timing)
     vacuum_full_map_kpa = float(d.vacuum_full_map_kpa)  # fixed 40 kPa; not prompted
+    boost_timing_limit = float(getattr(d, "boost_timing_limit", d.boost_retard_max))
     boost_retard_per_psi = float(d.boost_retard_per_psi)
-    boost_retard_max = float(d.boost_retard_max)
 
-    if layers in {"vacuum", "full"}:
+    if layers in {"vacuum", "boost", "full"}:
         print("\n— Vacuum —")
         vacuum_total_timing = float(
             _ask(
@@ -104,19 +104,12 @@ def prompt_engine_spec(
             )
         )
 
-    if layers == "full":
-        print("\n— Boost (full model) —")
-        boost_retard_per_psi = float(
+    if layers in {"boost", "full"}:
+        print("\n— Boost —")
+        boost_timing_limit = float(
             _ask(
-                "Boost retard step (° per psi)",
-                _num_default(d.boost_retard_per_psi),
-                cast=float,
-            )
-        )
-        boost_retard_max = float(
-            _ask(
-                "Boost timing limit (total ° min)",
-                _num_default(d.boost_retard_max, as_int=True),
+                "Boost timing limit",
+                _num_default(boost_timing_limit, as_int=True),
                 cast=int,
             )
         )
@@ -137,8 +130,9 @@ def prompt_engine_spec(
         vacuum_total_timing=float(vacuum_total_timing),
         vacuum_full_map_kpa=float(vacuum_full_map_kpa),
         vacuum_advance_max=float(vacuum_total_timing),
+        boost_timing_limit=float(boost_timing_limit),
+        boost_retard_max=float(boost_timing_limit),
         boost_retard_per_psi=float(boost_retard_per_psi),
-        boost_retard_max=float(boost_retard_max),
     )
 
 
