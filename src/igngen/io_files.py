@@ -34,7 +34,7 @@ def load_csv(path: str | Path) -> TimingTable:
         raise ValueError("CSV header must start with 'rpm' or 'load'")
 
     if header[0].lower() == "rpm":
-        load = [float(x) for x in header[1:]]
+        load = [float(int(round(float(x)))) for x in header[1:]]
         rpm: list[float] = []
         values: list[list[float]] = []
         for row in rows[1:]:
@@ -42,17 +42,17 @@ def load_csv(path: str | Path) -> TimingTable:
                 continue
             if len(row) != len(header):
                 raise ValueError(f"row length mismatch in {path}")
-            rpm.append(float(row[0]))
+            rpm.append(float(int(round(float(row[0])))))
             values.append([float(int(round(float(c)))) for c in row[1:]])
         return TimingTable(rpm=rpm, load=load, values=values)
 
-    rpm = [float(x) for x in header[1:]]
+    rpm = [float(int(round(float(x)))) for x in header[1:]]
     load_vals: list[float] = []
     raw_rows: list[list[float]] = []
     for row in rows[1:]:
         if not row or all(not c.strip() for c in row):
             continue
-        load_vals.append(float(row[0]))
+        load_vals.append(float(int(round(float(row[0])))))
         raw_rows.append([float(int(round(float(c)))) for c in row[1:]])
     pairs = sorted(zip(load_vals, raw_rows), key=lambda p: p[0])
     load_sorted = [p[0] for p in pairs]
@@ -63,11 +63,6 @@ def load_csv(path: str | Path) -> TimingTable:
 
 
 def save_csv(table: TimingTable, path: str | Path, *, export: str = "swicked") -> None:
-    """Write CSV.
-
-    ``swicked`` (default): load rows high→low, RPM columns left→right.
-    ``alpha``: RPM rows top→bottom, load columns left→right (Alpha paste).
-    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
@@ -78,8 +73,10 @@ def save_csv(table: TimingTable, path: str | Path, *, export: str = "swicked") -
                 writer.writerow([_num(r), *[str(int(round(c))) for c in table.values[i]]])
             return
 
+        # swicked / base: load ascending (low→high) so first data row is low load;
+        # last row is high load — bottom-left origin when viewed with RPM→
         writer.writerow(["load", *[_num(x) for x in table.rpm]])
-        for j in reversed(range(len(table.load))):
+        for j in range(len(table.load)):
             writer.writerow(
                 [
                     _num(table.load[j]),
@@ -92,8 +89,8 @@ def load_json(path: str | Path) -> TimingTable:
     path = Path(path)
     data = json.loads(path.read_text())
     return TimingTable(
-        rpm=[float(x) for x in data["rpm"]],
-        load=[float(x) for x in data["load"]],
+        rpm=[float(int(round(float(x)))) for x in data["rpm"]],
+        load=[float(int(round(float(x)))) for x in data["load"]],
         values=[[float(int(round(float(c)))) for c in row] for row in data["values"]],
         load_unit=str(data.get("load_unit", "inHg")),
     )
@@ -103,17 +100,14 @@ def save_json(table: TimingTable, path: str | Path) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "rpm": table.rpm,
-        "load": table.load,
+        "rpm": [int(r) for r in table.rpm],
+        "load": [int(v) for v in table.load],
         "values": [[int(round(c)) for c in row] for row in table.values],
         "load_unit": table.load_unit,
         "units": {"timing": "deg_btdc_integer", "load": table.load_unit},
-        "layout_note": "internal values[rpm_index][load_index]; axes ascending",
     }
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
 
 def _num(value: float) -> str:
-    if float(value).is_integer():
-        return str(int(value))
-    return f"{value:.4g}"
+    return str(int(round(value)))

@@ -37,6 +37,12 @@ def prompt_engine_spec() -> EngineSpec:
     boost_psi = _ask("Max boost (psi, 0 = NA)", 7, cast=float)
     base_timing = _ask("Base / idle timing (°BTDC)", 15, cast=int)
     idle_rpm = _ask("Target idle RPM", 1100, cast=int)
+    print("\n— Ignition corrections —")
+    idle_pocket_width = _ask("Idle pocket width (±RPM total span)", 250, cast=int)
+    vacuum_advance_per_kpa = _ask("Vacuum advance step (° per kPa below atm)", 0.35, cast=float)
+    vacuum_advance_max = _ask("Vacuum advance limit (°)", 18, cast=int)
+    boost_retard_per_psi = _ask("Boost retard step (° per psi)", 1.5, cast=float)
+    boost_retard_max = _ask("Boost retard limit (°)", 12, cast=int)
     print()
     return EngineSpec(
         displacement_cc=float(displacement_cc),
@@ -48,6 +54,11 @@ def prompt_engine_spec() -> EngineSpec:
         boost_psi=float(boost_psi),
         base_timing=float(base_timing),
         idle_rpm=float(idle_rpm),
+        idle_pocket_width=float(idle_pocket_width),
+        vacuum_advance_per_kpa=float(vacuum_advance_per_kpa),
+        vacuum_advance_max=float(vacuum_advance_max),
+        boost_retard_per_psi=float(boost_retard_per_psi),
+        boost_retard_max=float(boost_retard_max),
     )
 
 
@@ -56,4 +67,4 @@ def prompt_output_path(default: str = "map.csv") -> str:
 
 
 def prompt_preset(default: str = "alpha") -> str:
-    return str(_ask("Axis preset (alpha | base)", default, cast=str))
+    return str(_ask("Axis preset (alpha | base | none)", default, cast=str))

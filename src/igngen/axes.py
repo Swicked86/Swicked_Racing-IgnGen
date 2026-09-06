@@ -1,17 +1,4 @@
-"""Nonlinear, landmark-priority axis generation (audio-scale philosophy).
-
-Not a literal log scale — density follows rate-of-change / control importance.
-Ideal landmarks are ranked; the generator keeps the highest priorities that fit
-the requested axis length, then fills remaining slots for interpolation.
-
-Examples from research (idle=1100, tq=4800, hp=7800, redline=9300):
-
-8 RPM columns (priorities only):
-  300, 850, 1100, 1350, 4800, 7800, 9300, 10300
-
-12 RPM columns (idle denser + transitions):
-  300, 700, 850, 1000, 1100, 1200, 1350, 2500, 4800, 7800, 8800, 10300
-"""
+"""Nonlinear, landmark-priority axis generation (audio-scale philosophy)."""
 
 from __future__ import annotations
 
@@ -42,7 +29,6 @@ def rpm_landmarks(spec: EngineSpec) -> list[Landmark]:
         Landmark(soft, 85, "soft_limit"),
         Landmark(spec.redline_rpm, 100, "redline"),
         Landmark(overspeed, 100, "overspeed"),
-        # useful transitions (lower priority)
         Landmark(max(600.0, idle - half - 150), 50, "idle_approach"),
         Landmark(idle + half + 250, 50, "off_idle"),
         Landmark((idle + spec.peak_torque_rpm) / 2.0, 50, "tq_rise_mid"),
@@ -51,9 +37,8 @@ def rpm_landmarks(spec: EngineSpec) -> list[Landmark]:
 
 
 def load_landmarks_kpa(spec: EngineSpec) -> list[Landmark]:
-    """MAP absolute kPa; atmosphere (100) is mandatory."""
     atm = spec.atm_kpa
-    max_boost_kpa = atm + spec.boost_psi * 6.895  # psi → approx kPa gauge
+    max_boost_kpa = atm + spec.boost_psi * 6.895
     idle_map = 45.0
     return [
         Landmark(20, 80, "deep_vacuum"),
@@ -70,8 +55,6 @@ def load_landmarks_kpa(spec: EngineSpec) -> list[Landmark]:
 
 
 def load_landmarks_inhg(spec: EngineSpec) -> list[Landmark]:
-    """Alpha-style gauge inHg; ~0 is atmosphere crossover."""
-    # Rough: boost_psi * 2.036 ≈ inHg gauge
     max_boost = spec.boost_psi * 2.036 if spec.boost_psi > 0 else 10.0
     return [
         Landmark(-90.0, 80, "deep_vacuum"),
@@ -89,28 +72,24 @@ def load_landmarks_inhg(spec: EngineSpec) -> list[Landmark]:
 
 
 def select_axis(landmarks: list[Landmark], count: int) -> list[float]:
-    """Keep highest-priority unique values that fit ``count``, then fill gaps."""
     if count < 2:
         raise ValueError("axis count must be >= 2")
 
-    # Dedupe by rounded value, keep highest priority
     best: dict[float, Landmark] = {}
     for lm in landmarks:
-        key = round(lm.value, 4)
+        key = float(int(round(lm.value)))
         if key not in best or lm.priority > best[key].priority:
-            best[key] = lm
+            best[key] = Landmark(key, lm.priority, lm.label)
     ranked = sorted(best.values(), key=lambda x: (-x.priority, x.value))
 
     chosen: list[Landmark] = []
     for lm in ranked:
         if len(chosen) >= count:
             break
-        # skip if too close to an already chosen point
         if any(abs(lm.value - c.value) < 1e-6 for c in chosen):
             continue
         chosen.append(lm)
 
-    # If still short, add midpoints between largest gaps
     values = sorted(c.value for c in chosen)
     while len(values) < count:
         gaps = [(values[i + 1] - values[i], i) for i in range(len(values) - 1)]
@@ -118,32 +97,20 @@ def select_axis(landmarks: list[Landmark], count: int) -> list[float]:
         if not gaps or gaps[0][0] <= 0:
             break
         _, i = gaps[0]
-        mid = (values[i] + values[i + 1]) / 2.0
-        values.insert(i + 1, round(mid, 4))
-
-    # If overshot somehow, trim lowest-priority extras (shouldn't with loop)
-    values = sorted(set(values))
-    if len(values) > count:
-        # keep mandatory-ish by re-selecting from ranked that exist in values
-        keep = []
-        for lm in ranked:
-            v = round(lm.value, 4)
-            if any(abs(v - x) < 1e-6 for x in values) and len(keep) < count:
-                keep.append(next(x for x in values if abs(x - v) < 1e-6))
-        # fill with evenly spaced from remaining
-        for x in values:
-            if len(keep) >= count:
+        mid = float(int(round((values[i] + values[i + 1]) / 2.0)))
+        if mid in values or mid <= values[i] or mid >= values[i + 1]:
+            # force a distinct integer midpoint
+            mid = values[i] + 1
+            if mid >= values[i + 1]:
                 break
-            if x not in keep:
-                keep.append(x)
-        values = sorted(keep)[:count]
+        values.insert(i + 1, mid)
 
-    # Final length fix: pad with linear endpoints if still short
+    values = sorted(set(float(int(round(v))) for v in values))
     while len(values) < count:
-        values.append(values[-1] + (values[-1] - values[-2] if len(values) > 1 else 100))
-        values = sorted(values)
+        values.append(values[-1] + max(100, int(values[-1] - values[-2]) if len(values) > 1 else 100))
+        values = sorted(set(values))
 
-    return [float(round(v, 4)) for v in values[:count]]
+    return [float(v) for v in values[:count]]
 
 
 def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
@@ -157,7 +124,6 @@ def generate_load_axis(spec: EngineSpec, count: int, *, unit: str = "kPa") -> li
 
 
 def example_axes_for_docs(spec: EngineSpec | None = None) -> dict[str, list[float]]:
-    """Canonical examples from the ChatGPT research thread."""
     spec = spec or EngineSpec()
     return {
         "rpm_8": generate_rpm_axis(spec, 8),

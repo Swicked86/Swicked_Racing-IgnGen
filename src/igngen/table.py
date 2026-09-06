@@ -10,9 +10,7 @@ from .heatmap import colorize_timing
 class TimingTable:
     """RPM × load ignition timing grid (degrees BTDC, whole numbers).
 
-    Internal storage is always:
-      rpm ascending, load ascending, values[rpm_i][load_j]
-    Display/export orientation is applied at render time.
+    Internal storage: rpm ascending, load ascending, values[rpm_i][load_j].
     """
 
     rpm: list[float]
@@ -30,6 +28,9 @@ class TimingTable:
         for row in self.values:
             if len(row) != len(self.load):
                 raise ValueError("each values row must match load count")
+        # Whole numbers for axes and cells
+        self.rpm = [float(int(round(r))) for r in self.rpm]
+        self.load = [float(int(round(v))) for v in self.load]
         self.values = [[float(int(round(c))) for c in row] for row in self.values]
 
     @property
@@ -68,15 +69,17 @@ class TimingTable:
     ) -> str:
         """Render a terminal heatmap.
 
-        ``swicked`` (default): RPM → , Load ↑ (high load at top) — research preference.
-        ``alpha``: RPM ↓ rows, Load → columns — Alpha on-screen orientation.
+        ``swicked`` / base: RPM → ; Load printed low→high top-to-bottom so the
+        bottom-left cell is min RPM × min load (origin). High load sits at the
+        bottom of the terminal (right-side-up map floor).
+        ``alpha``: RPM ↓ rows, Load → columns — top-left origin.
         """
         if layout in {"alpha", "alphalink"}:
             return self._format_alpha(precision=precision, color=color)
         return self._format_swicked(precision=precision, color=color)
 
     def _format_alpha(self, *, precision: int, color: bool) -> str:
-        hdr = ["rpm"] + [_fmt(x, 2) for x in self.load]
+        hdr = ["rpm"] + [_fmt(x, 0) for x in self.load]
         widths = [max(len("rpm"), 6)] + [max(len(h), 4) for h in hdr[1:]]
         for i, rpm in enumerate(self.rpm):
             widths[0] = max(widths[0], len(_fmt(rpm, 0)))
@@ -87,7 +90,7 @@ class TimingTable:
             return "  ".join(c.rjust(widths[i]) for i, c in enumerate(cols))
 
         lines = [
-            "Load →",
+            "Load →   (origin top-left)",
             plain_row(hdr),
             plain_row(["-" * w for w in widths]),
         ]
@@ -103,11 +106,12 @@ class TimingTable:
         return "\n".join(lines)
 
     def _format_swicked(self, *, precision: int, color: bool) -> str:
+        # Print load ascending top→bottom so bottom-left = min load × min RPM
         hdr = ["load"] + [_fmt(x, 0) for x in self.rpm]
         widths = [max(len("load"), 6)] + [max(4, len(h)) for h in hdr[1:]]
-        load_order = list(reversed(range(len(self.load))))
+        load_order = list(range(len(self.load)))  # low load at top of screen
         for j in load_order:
-            widths[0] = max(widths[0], len(_fmt(self.load[j], 2)))
+            widths[0] = max(widths[0], len(_fmt(self.load[j], 0)))
             for i in range(len(self.rpm)):
                 widths[i + 1] = max(widths[i + 1], len(_fmt(self.values[i][j], precision)))
 
@@ -115,12 +119,12 @@ class TimingTable:
             return "  ".join(c.rjust(widths[i]) for i, c in enumerate(cols))
 
         lines = [
-            "Load ↑",
+            "Load (low→high down)   origin bottom-left = last row, first col",
             plain_row(hdr),
             plain_row(["-" * w for w in widths]),
         ]
         for j in load_order:
-            padded = [_fmt(self.load[j], 2).rjust(widths[0])]
+            padded = [_fmt(self.load[j], 0).rjust(widths[0])]
             for i in range(len(self.rpm)):
                 cell = self.values[i][j]
                 plain = _fmt(cell, precision)
@@ -145,10 +149,10 @@ def parse_range(spec: str) -> list[float]:
     values: list[float] = []
     x = start
     while x <= stop + step * 1e-9:
-        values.append(round(x, 10))
+        values.append(float(int(round(x))))
         x += step
     if values and values[-1] < stop and abs(values[-1] - stop) > abs(step) * 0.51:
-        values.append(stop)
+        values.append(float(int(round(stop))))
     return values
 
 
