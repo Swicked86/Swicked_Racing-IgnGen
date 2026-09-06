@@ -1,1 +1,1 @@
-@/workspace/igngen-patch/cli_ONLY_CONTENT.py
+PLACEHOLDER_WILL_REPLACE
