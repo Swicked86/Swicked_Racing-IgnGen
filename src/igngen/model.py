@@ -1,6 +1,6 @@
 """Ignition surface model from Swicked Racing research notes.
 
-Build in layers. Current review layer: mechanical + vacuum advance.
+Build in layers. Current review layer: mechanical + vacuum (total timing @ ≤40 kPa).
 Boost / idle pocket / soft limit are staged next.
 """
 
@@ -30,17 +30,18 @@ class EngineSpec:
     base_timing: float = 10.0
     mech_timing_at_peak_torque: float = 32.0
     idle_rpm: float = 1100.0
-    # Vacuum advance (additive; full-in MAP is static)
-    vacuum_advance: float = 10.0
-    vacuum_full_map_kpa: float = 50.0
+    # Vacuum: absolute total timing at ≤ vacuum_full_map_kpa (fixed 40 kPa)
+    vacuum_total_timing: float = 50.0
+    vacuum_full_map_kpa: float = 40.0
     # Later layers (kept for full model)
     idle_pocket_width: float = 250.0
     soft_limit_rpm_before_redline: float = 500.0
     soft_limit_retard: float = 10.0
-    vacuum_advance_per_kpa: float = 0.35  # legacy full-model rate; unused by vacuum layer
-    vacuum_advance_max: float = 42.0
-    # RPM where vacuum add is fully phased in (0 = auto: pocket_hi + ramp)
-    vacuum_full_rpm: float = 0.0  # total ° ceiling under vacuum
+    vacuum_advance_per_kpa: float = 0.35  # legacy
+    vacuum_advance: float = 10.0  # legacy alias; prefer vacuum_total_timing
+    vacuum_advance_max: float = 50.0  # kept as soft ceiling (= total by default)
+    # RPM where vacuum is fully phased in (0 = auto: pocket_hi + ramp)
+    vacuum_full_rpm: float = 0.0
     boost_retard_per_psi: float = 1.5
     boost_retard_max: float = 10.0
     map_floor: float = 0.0
@@ -79,23 +80,23 @@ def mechanical_advance(rpm: float, spec: EngineSpec) -> float:
     return base + (peak - base) * t
 
 
-def vacuum_advance(map_kpa: float, spec: EngineSpec) -> float:
-    """Additive vacuum advance vs MAP (RPM-independent).
 
-    Full advance at/below static ``vacuum_full_map_kpa`` (default **50 kPa**).
-    Linear taper from that MAP up to atmosphere → 0°. Above atm → 0°.
+def vacuum_advance(map_kpa: float, spec: EngineSpec) -> float:
+    """Legacy additive helper — prefer vacuum_total_timing / cell taper.
+
+    Kept for older tests: add = total - peak mech (approx).
     """
-    atm = spec.atm_kpa
+    add = max(0.0, float(spec.vacuum_total_timing) - float(spec.mech_timing_at_peak_torque))
+    if spec.vacuum_advance and spec.vacuum_advance != 10.0 and add == 0:
+        add = float(spec.vacuum_advance)
     full_at = spec.vacuum_full_map_kpa
-    add = spec.vacuum_advance
+    atm = spec.atm_kpa
     if map_kpa >= atm:
         return 0.0
     if map_kpa <= full_at:
         return add
-    # full_at < map < atm
     t = (map_kpa - full_at) / max(atm - full_at, 1.0)
     return add * (1.0 - t)
-
 
 
 def _pocket_hi_rpm(spec: EngineSpec) -> float:
@@ -104,20 +105,15 @@ def _pocket_hi_rpm(spec: EngineSpec) -> float:
 
 
 def vacuum_full_in_rpm(spec: EngineSpec) -> float:
-    """RPM at which vacuum advance is fully applied (above idle pocket)."""
+    """RPM at which vacuum total timing is fully applied (above idle pocket)."""
     if spec.vacuum_full_rpm and spec.vacuum_full_rpm > 0:
         return float(spec.vacuum_full_rpm)
     pocket_hi = _pocket_hi_rpm(spec)
-    # ~0.8–1.0k above pocket so idle corner stays at mechanical base
     return pocket_hi + max(800.0, float(spec.idle_rpm) * 0.75)
 
 
 def vacuum_rpm_scale(rpm: float, spec: EngineSpec) -> float:
-    """0 through the idle pocket; linear to 1 by vacuum_full_in_rpm.
-
-    Keeps cranking/idle cells on mechanical base so vacuum does not
-    light up the whole idle corner of the map.
-    """
+    """0 through the idle pocket; linear to 1 by vacuum_full_in_rpm."""
     pocket_hi = _pocket_hi_rpm(spec)
     full_at = vacuum_full_in_rpm(spec)
     if rpm <= pocket_hi:
@@ -128,8 +124,68 @@ def vacuum_rpm_scale(rpm: float, spec: EngineSpec) -> float:
 
 
 def vacuum_advance_at(rpm: float, map_kpa: float, spec: EngineSpec) -> float:
-    """MAP vacuum curve gated by RPM (no vac in the idle pocket)."""
+    """Legacy additive path (RPM-gated). Table gen uses cell taper instead."""
     return vacuum_advance(map_kpa, spec) * vacuum_rpm_scale(rpm, spec)
+
+
+def _whole_degree_taper(high: int, low: int, n_mid: int) -> list[int]:
+    """n_mid whole° steps between high (exclusive) and low (exclusive).
+
+    Splits (high - low) across (n_mid + 1) gaps so every cell stays an int.
+    """
+    if n_mid <= 0:
+        return []
+    high_i, low_i = int(high), int(low)
+    gaps = n_mid + 1
+    diff = high_i - low_i
+    if diff <= 0:
+        return [high_i] * n_mid
+    base, rem = divmod(diff, gaps)
+    gap_sizes = [base + (1 if i < rem else 0) for i in range(gaps)]
+    out: list[int] = []
+    cur = high_i
+    for g in gap_sizes[:-1]:
+        cur -= g
+        out.append(cur)
+    return out
+
+
+def vacuum_row_timings(
+    rpm: float,
+    loads_kpa: list[float],
+    spec: EngineSpec,
+) -> list[int]:
+    """Whole-degree vacuum-layer timings for one RPM across load breakpoints.
+
+    - Idle pocket (RPM gate): mechanical only
+    - MAP ≤ 40 kPa: vacuum_total_timing (blended by RPM ramp)
+    - MAP ≥ atm: mechanical
+    - Between: whole° staircase across those load cells
+    """
+    mech = int(round(mechanical_advance(rpm, spec)))
+    scale = vacuum_rpm_scale(rpm, spec)
+    if scale <= 0.0:
+        return [mech for _ in loads_kpa]
+
+    total = int(round(float(spec.vacuum_total_timing)))
+    high = int(round(mech + (total - mech) * scale))
+    full_at = float(spec.vacuum_full_map_kpa)
+    atm = float(spec.atm_kpa)
+
+    full_idxs = [i for i, m in enumerate(loads_kpa) if m <= full_at]
+    mid_idxs = [i for i, m in enumerate(loads_kpa) if full_at < m < atm]
+    atm_idxs = [i for i, m in enumerate(loads_kpa) if m >= atm]
+
+    out = [mech] * len(loads_kpa)
+    for i in full_idxs:
+        out[i] = high
+    for i in atm_idxs:
+        out[i] = mech
+    mids = _whole_degree_taper(high, mech, len(mid_idxs))
+    # mid_idxs are in ascending load order already if loads sorted low→high
+    for i, idx in enumerate(mid_idxs):
+        out[idx] = mids[i] if i < len(mids) else mech
+    return out
 
 
 def describe_mechanical_curve(spec: EngineSpec) -> str:
@@ -144,10 +200,9 @@ def describe_vacuum_curve(spec: EngineSpec) -> str:
     pocket_hi = _pocket_hi_rpm(spec)
     full_rpm = vacuum_full_in_rpm(spec)
     return (
-        f"Vacuum: +{spec.vacuum_advance:.0f}° full at ≤{spec.vacuum_full_map_kpa:.0f} kPa, "
-        f"taper to 0° by atm ({spec.atm_kpa:.0f} kPa); "
-        f"0° through idle pocket (≤{pocket_hi:.0f} RPM), full by {full_rpm:.0f} RPM; "
-        f"total ceiling {spec.vacuum_advance_max:.0f}°"
+        f"Vacuum: {spec.vacuum_total_timing:.0f}° total at full vacuum, "
+        f"whole° steps across load cells to mechanical by atm; "
+        f"0° vac through idle pocket (≤{pocket_hi:.0f} RPM), full by {full_rpm:.0f} RPM"
     )
 
 
@@ -197,19 +252,38 @@ def timing_at(
         return int(round(max(0.0, mech)))
 
     if layers == "vacuum":
-        value = mech + vacuum_advance_at(rpm, map_kpa, spec)
-        if map_kpa < spec.atm_kpa:
-            value = min(value, spec.vacuum_advance_max)
+        # Single-point approx (tables use vacuum_row_timings for whole° cells)
+        scale = vacuum_rpm_scale(rpm, spec)
+        if scale <= 0.0:
+            return int(round(max(0.0, mech)))
+        total = float(spec.vacuum_total_timing)
+        high = mech + (total - mech) * scale
+        full_at = float(spec.vacuum_full_map_kpa)
+        atm = float(spec.atm_kpa)
+        if map_kpa <= full_at:
+            value = high
+        elif map_kpa >= atm:
+            value = mech
+        else:
+            t = (map_kpa - full_at) / max(atm - full_at, 1.0)
+            value = high + (mech - high) * t
         return int(round(max(0.0, value)))
 
-    # full — vacuum RPM-gated; boost / idle / soft still staged here
+    # full — vacuum total/RPM-gated; boost / idle / soft still staged here
     atm = spec.atm_kpa
     if map_kpa <= atm:
-        vac_boost = vacuum_advance_at(rpm, map_kpa, spec)
+        # reuse vacuum-layer absolute timing then add idle pocket on top
+        vac_abs = float(
+            timing_at(rpm, map_kpa, spec, layers="vacuum")
+        )
+        value = vac_abs + idle_pocket_correction(rpm, map_kpa, spec)
     else:
         over_psi = (map_kpa - atm) / KPA_PER_PSI
-        vac_boost = -over_psi * spec.boost_retard_per_psi
-    value = mech + vac_boost + idle_pocket_correction(rpm, map_kpa, spec)
+        value = (
+            mech
+            - over_psi * spec.boost_retard_per_psi
+            + idle_pocket_correction(rpm, map_kpa, spec)
+        )
     atm = spec.atm_kpa
     if map_kpa < atm:
         value = min(value, spec.vacuum_advance_max)
@@ -226,7 +300,7 @@ def timing_at(
             floor = max(spec.map_floor, spec.boost_retard_max)
         else:
             floor = spec.map_floor
-    ceiling = max(spec.map_ceiling, spec.vacuum_advance_max)
+    ceiling = max(spec.map_ceiling, spec.vacuum_total_timing, spec.vacuum_advance_max)
     return int(round(min(ceiling, max(floor, value))))
 
 
@@ -242,16 +316,24 @@ def generate_table(
     rpm_i = [float(int(round(r))) for r in rpm]
     load_i = [float(int(round(v))) for v in load]
     values: list[list[float]] = []
+    # Precompute MAP for each load breakpoint
+    maps: list[float] = []
+    unit = load_unit.lower()
+    for load_v in load_i:
+        if unit in {"inhg", "inhg_gauge"}:
+            maps.append(float(inhg_gauge_to_kpa_abs(load_v, spec.atm_kpa)))
+        else:
+            maps.append(float(load_v))
+
     for r in rpm_i:
-        row: list[float] = []
-        for load_v in load_i:
-            unit = load_unit.lower()
-            if unit in {"inhg", "inhg_gauge"}:
-                map_kpa = inhg_gauge_to_kpa_abs(load_v, spec.atm_kpa)
-            else:
-                map_kpa = float(load_v)
-            row.append(float(timing_at(r, map_kpa, spec, layers=layers)))
-        values.append(row)
+        if layers == "vacuum":
+            row_i = vacuum_row_timings(r, maps, spec)
+            values.append([float(v) for v in row_i])
+        else:
+            row: list[float] = []
+            for map_kpa in maps:
+                row.append(float(timing_at(r, map_kpa, spec, layers=layers)))
+            values.append(row)
     return TimingTable(
         rpm=rpm_i,
         load=load_i,
