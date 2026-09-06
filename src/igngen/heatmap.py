@@ -16,16 +16,17 @@ def colorize_timing(value: float, *, enabled: bool = True, precision: int = 0) -
 
 
 def _ansi_for(value: float) -> str:
+    """Color scale — cool lows, warm mids, red from 36° up."""
     if value <= 0:
         return "\033[38;2;40;90;220m"
-    if value < 8:
+    if value < 10:
         return "\033[38;2;70;160;220m"
-    if value < 14:
+    if value < 16:
         return "\033[38;2;80;200;120m"
-    if value < 20:
+    if value < 22:
         return "\033[38;2;180;220;60m"
-    if value < 26:
+    if value < 28:
         return "\033[38;2;240;180;40m"
-    if value < 30:
-        return "\033[38;2;240;100;80m"
-    return "\033[38;2;255;70;140m"
+    if value < 36:
+        return "\033[38;2;240;120;50m"  # orange — not red yet
+    return "\033[38;2;255;70;140m"  # red/magenta from 36°
