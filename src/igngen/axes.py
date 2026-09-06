@@ -4,6 +4,9 @@ RPM columns: low anchors always include the idle **pocket**
 (cranking, pocket lower, idle, pocket upper). Remaining slots split **2:1**:
   2 — (above idle pocket → peak torque]  (mechanical climb)
   1 — (peak torque → overspeed]          (hold / soft later)
+
+Profile / user landmarks stay exact. Generated filler RPMs snap to
+increments of 50.
 """
 
 from __future__ import annotations
@@ -11,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .model import EngineSpec
+
+RPM_FILL_STEP = 50
 
 
 @dataclass(frozen=True)
@@ -24,6 +29,11 @@ def _as_int(v: float) -> float:
     return float(int(round(v)))
 
 
+def _snap_rpm(v: float, *, step: int = RPM_FILL_STEP) -> float:
+    """Round to nearest step (default 50 RPM)."""
+    return float(int(round(v / step) * step))
+
+
 def _unique_sorted(values: list[float], *, min_gap: float = 1.0) -> list[float]:
     out: list[float] = []
     for v in sorted(_as_int(x) for x in values):
@@ -32,26 +42,43 @@ def _unique_sorted(values: list[float], *, min_gap: float = 1.0) -> list[float]:
     return out
 
 
-def _even_inclusive_end(lo: float, hi: float, n: int) -> list[float]:
-    """n points in (lo, hi], always including hi when n >= 1."""
+def _fill_between(
+    lo: float,
+    hi: float,
+    n: int,
+    *,
+    include_hi: bool = True,
+    snap: bool = True,
+    forbidden: set[float] | None = None,
+) -> list[float]:
+    """Place n points in (lo, hi], optionally keeping hi exact and snapping fillers."""
     lo_i, hi_i = _as_int(lo), _as_int(hi)
+    forbidden = {_as_int(x) for x in (forbidden or set())}
     if n <= 0:
         return []
-    if n == 1:
+    if n == 1 and include_hi:
         return [hi_i]
     if hi_i <= lo_i + 1:
-        return [hi_i]
+        return [hi_i] if include_hi and n >= 1 else []
+
+    interior_n = n - 1 if include_hi else n
     points: list[float] = []
-    for i in range(1, n):
-        raw = lo_i + (hi_i - lo_i) * i / n
-        v = _as_int(raw)
+    for i in range(1, interior_n + 1):
+        raw = lo_i + (hi_i - lo_i) * i / (interior_n + 1)
+        v = _snap_rpm(raw) if snap else _as_int(raw)
+        # keep strictly inside (lo, hi)
         if v <= lo_i:
-            v = lo_i + i
+            v = _snap_rpm(lo_i + RPM_FILL_STEP) if snap else lo_i + 1
         if v >= hi_i:
-            v = hi_i - (n - i)
+            v = _snap_rpm(hi_i - RPM_FILL_STEP) if snap else hi_i - 1
+        if v <= lo_i or v >= hi_i:
+            continue
+        if v in forbidden:
+            continue
         points.append(float(v))
-    points.append(hi_i)
-    return _unique_sorted([p for p in points if p > lo_i], min_gap=50.0)[:n]
+    if include_hi:
+        points.append(hi_i)
+    return _unique_sorted(points, min_gap=float(RPM_FILL_STEP if snap else 1))[:n]
 
 
 def _pocket_edges(spec: EngineSpec) -> tuple[float, float]:
@@ -60,7 +87,6 @@ def _pocket_edges(spec: EngineSpec) -> tuple[float, float]:
     half = max(spec.idle_pocket_width / 2.0, 50.0)
     pocket_lo = idle - half
     pocket_hi = idle + half
-    # Keep pocket_lo above cranking so both edges stay distinct on the axis
     if pocket_lo <= 300:
         pocket_lo = 300 + max(50.0, half * 0.5)
     if pocket_hi <= idle:
@@ -83,7 +109,17 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
         pocket_hi = idle + max(50.0, (tq - idle) * 0.1)
         pocket_lo = min(pocket_lo, idle - max(50.0, (idle - cranking) * 0.25))
 
-    # Idle pocket must appear on the RPM scale: lower edge, idle, upper edge
+    # Specified landmarks — kept exact (not forced to ×50)
+    specified = {
+        _as_int(cranking),
+        _as_int(pocket_lo),
+        _as_int(idle),
+        _as_int(pocket_hi),
+        _as_int(tq),
+        _as_int(redline),
+        _as_int(overspeed),
+    }
+
     low = _unique_sorted([cranking, pocket_lo, idle, pocket_hi], min_gap=40.0)
 
     if len(low) >= count:
@@ -98,22 +134,27 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
     if dense_n + sparse_n > remaining:
         sparse_n = remaining - dense_n
 
-    dense = _even_inclusive_end(pocket_hi, tq, dense_n)
+    dense = _fill_between(
+        pocket_hi, tq, dense_n, include_hi=True, snap=True, forbidden=specified
+    )
+    # ensure peak torque endpoint present
+    if tq not in dense and dense_n >= 1:
+        dense = _unique_sorted(dense + [tq], min_gap=40.0)[:dense_n]
 
     sparse_compulsory = [v for v in _unique_sorted([redline, overspeed], min_gap=50.0) if v > tq]
     if len(sparse_compulsory) >= sparse_n:
-        sparse = [v for v in _unique_sorted([redline, overspeed], min_gap=50.0) if v > tq][
-            -sparse_n:
-        ]
+        sparse = [v for v in sparse_compulsory if v > tq][-sparse_n:]
     else:
         fill = sparse_n - len(sparse_compulsory)
-        mids: list[float] = []
-        if fill > 0:
-            top = redline if redline > tq + 50 else overspeed
-            extra = 1 if top not in sparse_compulsory else 0
-            mids = _even_inclusive_end(tq, top, fill + extra)
-            mids = [v for v in mids if v not in sparse_compulsory and v > tq][:fill]
-        sparse = _unique_sorted(mids + sparse_compulsory, min_gap=75.0)
+        mids = _fill_between(
+            tq,
+            redline if redline > tq + 50 else overspeed,
+            fill,
+            include_hi=False,
+            snap=True,
+            forbidden=specified | set(sparse_compulsory),
+        )
+        sparse = _unique_sorted(mids + sparse_compulsory, min_gap=50.0)
         while len(sparse) > sparse_n:
             protected = {_as_int(redline), _as_int(overspeed)}
             droppable = [v for v in sparse if v not in protected]
@@ -133,12 +174,16 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
                     best_span = span
                     best = i
             if best is None or best_span < 100:
-                sparse.append(sparse[-1] + 100 if sparse else tq + 100)
+                cand = _snap_rpm((sparse[-1] if sparse else tq) + 100)
             else:
-                mid = _as_int((seq[best] + seq[best + 1]) / 2.0)
-                if mid > tq:
-                    sparse.append(mid)
-            sparse = _unique_sorted([v for v in sparse if v > tq], min_gap=75.0)
+                cand = _snap_rpm((seq[best] + seq[best + 1]) / 2.0)
+            if cand > tq and cand not in sparse and cand not in specified:
+                sparse.append(cand)
+            elif cand in specified or cand in sparse:
+                cand = _snap_rpm(cand + RPM_FILL_STEP)
+                if cand > tq and cand < overspeed:
+                    sparse.append(cand)
+            sparse = _unique_sorted([v for v in sparse if v > tq], min_gap=50.0)
 
     axis = _unique_sorted(low + dense + sparse, min_gap=40.0)
 
@@ -163,22 +208,26 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
                 best_score = score
                 best_i = i
         if best_i is None:
-            axis.append(axis[-1] + 100)
+            axis.append(_snap_rpm(axis[-1] + 100))
         else:
-            mid = _as_int((axis[best_i] + axis[best_i + 1]) / 2.0)
-            axis.insert(best_i + 1, mid)
+            mid = _snap_rpm((axis[best_i] + axis[best_i + 1]) / 2.0)
+            if mid <= axis[best_i] or mid >= axis[best_i + 1] or mid in specified:
+                # try ±50 until a free slot appears
+                placed = False
+                for delta in (0, RPM_FILL_STEP, -RPM_FILL_STEP, 2 * RPM_FILL_STEP):
+                    cand = _snap_rpm(mid + delta)
+                    if axis[best_i] < cand < axis[best_i + 1] and cand not in axis:
+                        axis.insert(best_i + 1, cand)
+                        placed = True
+                        break
+                if not placed:
+                    axis.append(_snap_rpm(axis[-1] + 100))
+            else:
+                axis.insert(best_i + 1, mid)
         axis = _unique_sorted(axis, min_gap=40.0)
 
     if len(axis) > count:
-        protected = {
-            _as_int(cranking),
-            _as_int(pocket_lo),
-            _as_int(idle),
-            _as_int(pocket_hi),
-            _as_int(tq),
-            _as_int(redline),
-            _as_int(overspeed),
-        }
+        protected = set(specified)
         while len(axis) > count:
             droppable = [v for v in axis if v not in protected and v > tq]
             if not droppable:
@@ -199,7 +248,7 @@ def describe_rpm_axis(spec: EngineSpec, axis: list[float]) -> str:
     return (
         f"RPM axis {len(axis)} cols — idle pocket "
         f"{int(pocket_lo)}…{int(spec.idle_rpm)}…{int(pocket_hi)}, "
-        f"climb: {dense}, after peak TQ: {sparse} (budget 2:1)"
+        f"climb: {dense}, after peak TQ: {sparse} (budget 2:1; fillers ×{RPM_FILL_STEP})"
     )
 
 
@@ -264,16 +313,16 @@ def select_axis(landmarks: list[Landmark], count: int) -> list[float]:
         if not gaps or gaps[0][0] <= 1:
             break
         _, i = gaps[0]
-        mid = _as_int((values[i] + values[i + 1]) / 2.0)
+        mid = _snap_rpm((values[i] + values[i + 1]) / 2.0)
         if mid <= values[i] or mid >= values[i + 1] or mid in values:
-            mid = values[i] + 1
+            mid = values[i] + RPM_FILL_STEP
             if mid >= values[i + 1]:
                 break
         values.insert(i + 1, mid)
         values = _unique_sorted(values)
 
     while len(values) < count:
-        values.append(values[-1] + 100)
+        values.append(_snap_rpm(values[-1] + 100))
         values = _unique_sorted(values)
 
     return values[:count]

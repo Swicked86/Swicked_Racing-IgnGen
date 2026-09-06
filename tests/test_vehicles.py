@@ -27,11 +27,29 @@ def test_d16z6_rpm_axis_hits_idle_pocket_and_peaks():
     v = load_vehicle(repo / "vehicles" / "d16z6.ini")
     axis = generate_rpm_axis(v.spec, 16)
     assert len(axis) == 16
-    # idle pocket 670 ± 50 → 620 … 670 … 720
     assert any(abs(x - 620) < 1 for x in axis)
     assert any(abs(x - 670) < 1 for x in axis)
     assert any(abs(x - 720) < 1 for x in axis)
     assert any(abs(x - 5200) < 1 for x in axis)
     assert any(abs(x - 7200) < 1 for x in axis)
-    # overspeed ~8200
     assert max(axis) >= 8000
+
+
+def test_d16z6_fillers_are_multiples_of_50():
+    repo = Path(__file__).resolve().parents[1]
+    v = load_vehicle(repo / "vehicles" / "d16z6.ini")
+    s = v.spec
+    axis = generate_rpm_axis(s, 16)
+    specified = {
+        300.0,
+        float(s.idle_rpm - s.idle_pocket_width / 2),
+        float(s.idle_rpm),
+        float(s.idle_rpm + s.idle_pocket_width / 2),
+        float(s.peak_torque_rpm),
+        float(s.redline_rpm),
+        float(s.redline_rpm + 1000),
+    }
+    for x in axis:
+        if x in specified or any(abs(x - s) < 1 for s in specified):
+            continue
+        assert x % 50 == 0, f"filler {x} not on a 50 RPM step"
