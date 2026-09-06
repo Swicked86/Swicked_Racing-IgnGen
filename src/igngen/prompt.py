@@ -45,19 +45,29 @@ def prompt_engine_spec(*, layers: LayerName = "mechanical") -> EngineSpec:
     base_timing = _ask("Base / initial timing (°BTDC)", 10, cast=int)
     mech_at_tq = _ask("Total timing at peak torque (°)", 32, cast=int)
 
-    vacuum_advance_per_kpa = 0.35
+    vacuum_advance = 10.0
     vacuum_advance_max = 42.0
     boost_retard_per_psi = 1.5
     boost_retard_max = 10.0
 
-    if layers == "full":
-        print("\n— Load / vacuum / boost (full model) —")
-        vacuum_advance_per_kpa = float(
-            _ask("Vacuum advance step (° per kPa below atm)", 0.35, cast=float)
+    if layers in {"vacuum", "full"}:
+        print("\n— Vacuum advance —")
+        print("  (full advance at static ≤50 kPa; taper to 0° by atmosphere)")
+        vacuum_advance = float(
+            _ask("Vacuum advance (additive ° at ≤50 kPa)", 10, cast=int)
         )
-        vacuum_advance_max = float(_ask("Vacuum timing limit (total ° max)", 42, cast=int))
-        boost_retard_per_psi = float(_ask("Boost retard step (° per psi)", 1.5, cast=float))
-        boost_retard_max = float(_ask("Boost timing limit (total ° min)", 10, cast=int))
+        vacuum_advance_max = float(
+            _ask("Vacuum timing limit (total ° max)", 42, cast=int)
+        )
+
+    if layers == "full":
+        print("\n— Boost (full model) —")
+        boost_retard_per_psi = float(
+            _ask("Boost retard step (° per psi)", 1.5, cast=float)
+        )
+        boost_retard_max = float(
+            _ask("Boost timing limit (total ° min)", 10, cast=int)
+        )
 
     print()
     return EngineSpec(
@@ -72,7 +82,8 @@ def prompt_engine_spec(*, layers: LayerName = "mechanical") -> EngineSpec:
         mech_timing_at_peak_torque=float(mech_at_tq),
         idle_rpm=float(idle_rpm),
         idle_pocket_width=float(idle_pocket_width),
-        vacuum_advance_per_kpa=float(vacuum_advance_per_kpa),
+        vacuum_advance=float(vacuum_advance),
+        vacuum_full_map_kpa=50.0,
         vacuum_advance_max=float(vacuum_advance_max),
         boost_retard_per_psi=float(boost_retard_per_psi),
         boost_retard_max=float(boost_retard_max),
