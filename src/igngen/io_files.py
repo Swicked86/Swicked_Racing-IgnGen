@@ -14,12 +14,12 @@ def load_table(path: str | Path) -> TimingTable:
     return load_csv(path)
 
 
-def save_table(table: TimingTable, path: str | Path) -> None:
+def save_table(table: TimingTable, path: str | Path, *, export: str = "swicked") -> None:
     path = Path(path)
     if path.suffix.lower() == ".json":
         save_json(table, path)
     else:
-        save_csv(table, path)
+        save_csv(table, path, export=export)
 
 
 def load_csv(path: str | Path) -> TimingTable:
@@ -62,14 +62,30 @@ def load_csv(path: str | Path) -> TimingTable:
     return TimingTable(rpm=rpm, load=load_sorted, values=values)
 
 
-def save_csv(table: TimingTable, path: str | Path) -> None:
+def save_csv(table: TimingTable, path: str | Path, *, export: str = "swicked") -> None:
+    """Write CSV.
+
+    ``swicked`` (default): load rows high→low, RPM columns left→right.
+    ``alpha``: RPM rows top→bottom, load columns left→right (Alpha paste).
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["rpm", *[_num(x) for x in table.load]])
-        for i, r in enumerate(table.rpm):
-            writer.writerow([_num(r), *[str(int(round(c))) for c in table.values[i]]])
+        if export in {"alpha", "alphalink"}:
+            writer.writerow(["rpm", *[_num(x) for x in table.load]])
+            for i, r in enumerate(table.rpm):
+                writer.writerow([_num(r), *[str(int(round(c))) for c in table.values[i]]])
+            return
+
+        writer.writerow(["load", *[_num(x) for x in table.rpm]])
+        for j in reversed(range(len(table.load))):
+            writer.writerow(
+                [
+                    _num(table.load[j]),
+                    *[str(int(round(table.values[i][j]))) for i in range(len(table.rpm))],
+                ]
+            )
 
 
 def load_json(path: str | Path) -> TimingTable:
@@ -92,7 +108,7 @@ def save_json(table: TimingTable, path: str | Path) -> None:
         "values": [[int(round(c)) for c in row] for row in table.values],
         "load_unit": table.load_unit,
         "units": {"timing": "deg_btdc_integer", "load": table.load_unit},
-        "layout_note": "values[rpm_index][load_index]; axes ascending",
+        "layout_note": "internal values[rpm_index][load_index]; axes ascending",
     }
     path.write_text(json.dumps(payload, indent=2) + "\n")
 
