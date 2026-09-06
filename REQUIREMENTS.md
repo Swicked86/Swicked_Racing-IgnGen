@@ -37,14 +37,15 @@ Optional later: compressor efficiency / NA base HP for turbo VE concepts (shared
    - ≤ idle → base timing
    - idle → peak-torque RPM → ramp to total-at-peak-torque
    - above peak torque → **hold** (no further climb)
-2. **Vacuum** (total timing under vacuum):
+2. **Vacuum** (fans from the 100 kPa master RPM curve):
    - One prompt: **Total timing** (°); full-in MAP is fixed **40 kPa** (not prompted)
-   - MAP ≤ **40 kPa** → that total timing (absolute °)
-   - MAP ≥ atmosphere → mechanical only
+   - **100 kPa row = mechanical advance** (master curve)
+   - Max vacuum timing (e.g. 50° at ≤40 kPa) only once mechanical is **all-in**
+     (at/above peak-torque RPM)
+   - Below that RPM: available vacuum add =
+     `(total − peak_mech) × mechanical_progress` (same 0→1 schedule as mechanical)
    - Load cells between 40 kPa and atm → **whole-degree** staircase
-     (difference ÷ number of gaps, integer steps)
-   - **RPM gate:** **0°** vacuum through the idle pocket; linear ramp to full
-     by ~pocket_hi+800 RPM
+     from (mech + scaled add) down to mechanical
 3. **Boost retard** (separate **total °** min — **not** a mirror of vacuum) — later layer
 4. **Idle pocket**: localized only around idle RPM ± pocket width and **light load only** — later layer
 5. **Soft power loss**: start retarding ~500 RPM before redline — later layer
