@@ -3,32 +3,42 @@
 Philosophy: **not** even spacing, **not** a literal log scale — more like an
 audio EQ graph: dense where control matters, sparse where the model is flat.
 
+Spacing follows **rate of change of the timing model**, especially mechanical
+advance (changing from idle → peak torque, flat after).
+
 ## Landmark priorities (RPM)
 
 | Priority | Breakpoints |
 |---:|---|
-| 100 | cranking, idle target, peak torque, redline, overspeed (+1000) |
-| 90 | idle pocket edges (± width, default 250) |
-| 85 | peak HP, soft-limit start |
-| ≤70 | transition / filler midpoints |
+| 100 | cranking, idle target, peak torque |
+| 95–90 | redline, overspeed (+1000) |
+| 92 | mechanical ramp quarters (idle→peak torque) |
+| 75 | off-idle |
+| 55 | idle pocket edges (until pocket layer needs them) |
+| ≤45 | peak HP, soft-limit, post-peak fillers |
+
+Gap filling after landmark selection is **weighted**: idle→peak-torque gaps
+score ~3× raw span; post-peak hold scores ~0.35× so we don't burn half the
+table on a flat 32° plateau.
 
 ## Fit into table size
 
-Same landmarks, different resolution:
+Same landmarks, different resolution. Exact integers depend on engine inputs;
+shape should look like:
 
-**8 RPM columns** (keep mandatory + pocket edges; soft-limit may interpolate):
-
-```text
-300, 850, 1100, 1350, 4800, 7800, 9300, 10300
-```
-
-**12 RPM columns** (denser idle + soft-limit explicit):
+**8 RPM columns** — anchors + a couple ramp points:
 
 ```text
-300, 700, 850, 1000, 1100, 1200, 1350, 2500, 4800, 7800, 8800, 10300
+300, 1100, ~2200, ~3500, 4800, 9300, …, overspeed
 ```
 
-**24** can keep almost every landmark plus transitions.
+**12–16 RPM columns** — denser on the mechanical ramp; sparse after peak torque:
+
+```text
+cranking, idle, several ramp steps, peak torque, few post-peak, redline, overspeed
+```
+
+**24** can keep pocket edges, soft-limit, and more transitions.
 
 Load axis uses the same priority idea; **atmosphere is always mandatory**
 (`0` inHg on alpha, `100` kPa on base).
