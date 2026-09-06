@@ -26,47 +26,108 @@ def _ask(prompt: str, default: float | int | str | None = None, *, cast=float):
             print("  enter a number")
 
 
-def prompt_engine_spec(*, layers: LayerName = "mechanical") -> EngineSpec:
-    print("IgnGen — engine inputs (Enter keeps the default)\n")
-    displacement_cc = _ask("Displacement (cc)", 1600, cast=int)
-    peak_hp = _ask("Peak horsepower", 280, cast=float)
-    peak_hp_rpm = _ask("RPM at peak HP", 7800, cast=int)
-    peak_torque_lbft = _ask("Peak torque (lb-ft)", 189, cast=float)
-    peak_torque_rpm = _ask("RPM at peak torque", 4800, cast=int)
-    redline_rpm = _ask("Redline / max RPM", 9300, cast=int)
-    boost_psi = _ask("Max boost (psi, 0 = NA)", 7, cast=float)
-    idle_rpm = _ask("Target idle RPM", 1100, cast=int)
-    # Pocket width shapes the RPM axis even on mechanical-only builds
+def _num_default(v: float, *, as_int: bool = False):
+    """Pretty bracket default: ints without .0 when whole."""
+    if as_int:
+        return int(round(v))
+    if abs(v - round(v)) < 1e-9:
+        return int(round(v))
+    return float(v)
+
+
+def prompt_engine_spec(
+    *,
+    layers: LayerName = "mechanical",
+    defaults: EngineSpec | None = None,
+) -> EngineSpec:
+    """Prompt for engine inputs. ``defaults`` (e.g. vehicle profile) fill the [brackets]."""
+    d = defaults or EngineSpec()
+    title = "IgnGen — engine inputs (Enter keeps the default)"
+    if defaults is not None:
+        title += " — from vehicle profile"
+    print(f"{title}\n")
+
+    displacement_cc = _ask(
+        "Displacement (cc)", _num_default(d.displacement_cc, as_int=True), cast=int
+    )
+    peak_hp = _ask("Peak horsepower", _num_default(d.peak_hp), cast=float)
+    peak_hp_rpm = _ask(
+        "RPM at peak HP", _num_default(d.peak_hp_rpm, as_int=True), cast=int
+    )
+    peak_torque_lbft = _ask(
+        "Peak torque (lb-ft)", _num_default(d.peak_torque_lbft), cast=float
+    )
+    peak_torque_rpm = _ask(
+        "RPM at peak torque", _num_default(d.peak_torque_rpm, as_int=True), cast=int
+    )
+    redline_rpm = _ask(
+        "Redline / max RPM", _num_default(d.redline_rpm, as_int=True), cast=int
+    )
+    boost_psi = _ask(
+        "Max boost (psi, 0 = NA)", _num_default(d.boost_psi), cast=float
+    )
+    idle_rpm = _ask(
+        "Target idle RPM", _num_default(d.idle_rpm, as_int=True), cast=int
+    )
     idle_pocket_width = float(
-        _ask("Idle pocket width (total RPM span, centered on idle)", 250, cast=int)
+        _ask(
+            "Idle pocket width (total RPM span, centered on idle)",
+            _num_default(d.idle_pocket_width, as_int=True),
+            cast=int,
+        )
     )
 
     print("\n— Mechanical advance —")
-    base_timing = _ask("Base / initial timing (°BTDC)", 10, cast=int)
-    mech_at_tq = _ask("Total timing at peak torque (°)", 32, cast=int)
+    base_timing = _ask(
+        "Base / initial timing (°BTDC)",
+        _num_default(d.base_timing, as_int=True),
+        cast=int,
+    )
+    mech_at_tq = _ask(
+        "Total timing at peak torque (°)",
+        _num_default(d.mech_timing_at_peak_torque, as_int=True),
+        cast=int,
+    )
 
-    vacuum_advance = 10.0
-    vacuum_advance_max = 42.0
-    boost_retard_per_psi = 1.5
-    boost_retard_max = 10.0
+    vacuum_advance = float(d.vacuum_advance)
+    vacuum_advance_max = float(d.vacuum_advance_max)
+    vacuum_full_map_kpa = float(d.vacuum_full_map_kpa)
+    boost_retard_per_psi = float(d.boost_retard_per_psi)
+    boost_retard_max = float(d.boost_retard_max)
 
     if layers in {"vacuum", "full"}:
         print("\n— Vacuum advance —")
         print("  (full advance at static ≤50 kPa; taper to 0° by atmosphere)")
         vacuum_advance = float(
-            _ask("Vacuum advance (additive ° at ≤50 kPa)", 10, cast=int)
+            _ask(
+                "Vacuum advance (additive ° at ≤50 kPa)",
+                _num_default(d.vacuum_advance, as_int=True),
+                cast=int,
+            )
         )
         vacuum_advance_max = float(
-            _ask("Vacuum timing limit (total ° max)", 42, cast=int)
+            _ask(
+                "Vacuum timing limit (total ° max)",
+                _num_default(d.vacuum_advance_max, as_int=True),
+                cast=int,
+            )
         )
 
     if layers == "full":
         print("\n— Boost (full model) —")
         boost_retard_per_psi = float(
-            _ask("Boost retard step (° per psi)", 1.5, cast=float)
+            _ask(
+                "Boost retard step (° per psi)",
+                _num_default(d.boost_retard_per_psi),
+                cast=float,
+            )
         )
         boost_retard_max = float(
-            _ask("Boost timing limit (total ° min)", 10, cast=int)
+            _ask(
+                "Boost timing limit (total ° min)",
+                _num_default(d.boost_retard_max, as_int=True),
+                cast=int,
+            )
         )
 
     print()
@@ -83,7 +144,7 @@ def prompt_engine_spec(*, layers: LayerName = "mechanical") -> EngineSpec:
         idle_rpm=float(idle_rpm),
         idle_pocket_width=float(idle_pocket_width),
         vacuum_advance=float(vacuum_advance),
-        vacuum_full_map_kpa=50.0,
+        vacuum_full_map_kpa=float(vacuum_full_map_kpa),
         vacuum_advance_max=float(vacuum_advance_max),
         boost_retard_per_psi=float(boost_retard_per_psi),
         boost_retard_max=float(boost_retard_max),
