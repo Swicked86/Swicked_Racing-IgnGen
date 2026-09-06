@@ -13,10 +13,14 @@ def _ask(prompt: str, default: float | int | str | None = None, *, cast=float):
             if default is None:
                 print("  (required)")
                 continue
-            return cast(default) if not isinstance(default, str) or cast is not str else default
+            if cast is str:
+                return str(default)
+            return cast(default)
         try:
             if cast is int:
                 return int(float(raw))
+            if cast is str:
+                return raw
             return cast(raw)
         except ValueError:
             print("  enter a number")
@@ -51,5 +55,5 @@ def prompt_output_path(default: str = "map.csv") -> str:
     return str(_ask("Output file", default, cast=str))
 
 
-def prompt_preset(default: str = "alphalink-high-cam") -> str:
+def prompt_preset(default: str = "alpha") -> str:
     return str(_ask("Axis preset", default, cast=str))

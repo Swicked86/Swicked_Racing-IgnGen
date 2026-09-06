@@ -10,23 +10,21 @@ class AxisPreset:
     name: str
     description: str
     rpm: tuple[float, ...]
-    load: tuple[float, ...]  # load units described below
+    load: tuple[float, ...]
     load_unit: str
-    # How ALPHAlink / similar Honda tools usually lay out the grid
-    row_axis: str = "rpm"  # rows
-    column_axis: str = "load"  # columns
-    rpm_increases: str = "down"  # top → bottom in UI
-    load_increases: str = "right"  # left → right
+    row_axis: str = "rpm"
+    column_axis: str = "load"
+    rpm_increases: str = "down"
+    load_increases: str = "right"
 
 
-# Captured from ALPHAlink v0.1.47 High Cam Ignition (VX_180cc_base.bin):
-# "Load (inHg) vs RPM (degrees advance, 6 boost columns)"
-ALPHALINK_HIGH_CAM = AxisPreset(
-    name="alphalink-high-cam",
+# Alpha / ALPHAlink High Cam Ignition layout (20×16).
+# Load is gauge inHg: vacuum negative, ~0 ≈ atmosphere, boost positive.
+ALPHA = AxisPreset(
+    name="alpha",
     description=(
-        "ALPHAlink High Cam Ignition layout: 20 RPM × 16 Load(inHg). "
-        "Vacuum columns on the left, ~6 boost columns on the right; "
-        "0 inHg ≈ atmospheric crossover."
+        "Alpha (ALPHAlink-style) High Cam grid: 20 RPM × 16 Load. "
+        "Load axis is inHg (vacuum → boost). Heatmap display matches Alpha orientation."
     ),
     rpm=(
         0,
@@ -72,13 +70,15 @@ ALPHALINK_HIGH_CAM = AxisPreset(
 )
 
 PRESETS: dict[str, AxisPreset] = {
-    ALPHALINK_HIGH_CAM.name: ALPHALINK_HIGH_CAM,
+    ALPHA.name: ALPHA,
+    # Back-compat alias
+    "alphalink-high-cam": ALPHA,
 }
 
 
 def get_preset(name: str) -> AxisPreset:
     key = name.strip().lower()
     if key not in PRESETS:
-        known = ", ".join(sorted(PRESETS))
+        known = ", ".join(sorted({p.name for p in PRESETS.values()}))
         raise ValueError(f"unknown preset {name!r}; known: {known}")
     return PRESETS[key]
