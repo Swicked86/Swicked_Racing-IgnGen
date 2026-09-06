@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from igngen.axes import generate_rpm_axis
+from igngen.axes import _max_load_kpa, generate_load_axis, generate_rpm_axis
 from igngen.vehicles import find_vehicle, load_vehicle
 
 
@@ -53,3 +53,16 @@ def test_d16z6_fillers_are_multiples_of_50():
         if x in specified or any(abs(x - s) < 1 for s in specified):
             continue
         assert x % 50 == 0, f"filler {x} not on a 50 RPM step"
+
+
+def test_d16z6_load_axis_caps_at_max_boost():
+    repo = Path(__file__).resolve().parents[1]
+    v = load_vehicle(repo / "vehicles" / "d16z6.ini")
+    ceiling = _max_load_kpa(v.spec)
+    load = generate_load_axis(v.spec, 12, unit="kPa")
+    assert len(load) == 12
+    assert max(load) == round(ceiling) or abs(max(load) - ceiling) < 1
+    assert max(load) <= ceiling + 0.5
+    assert 100 in load or any(abs(x - 100) < 1 for x in load)
+    # no monster step past max boost
+    assert max(load) < 200
