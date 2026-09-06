@@ -8,7 +8,12 @@ from . import __version__
 from .axes import generate_load_axis, generate_rpm_axis
 from .generate import generate_baseline
 from .io_files import load_table, save_table
-from .model import EngineSpec, generate_table, validate_power
+from .model import (
+    EngineSpec,
+    describe_mechanical_curve,
+    generate_table,
+    validate_power,
+)
 from .preset_ini import find_preset_ini
 from .presets import PRESETS, get_preset
 from .prompt import prompt_engine_spec, prompt_output_path, prompt_preset
@@ -17,6 +22,7 @@ from .table import parse_range
 _LAYOUTS = ("swicked", "alpha")
 _EXPORTS = ("swicked", "alpha")
 _DEFAULT_PRESET = "base"
+_DEFAULT_LAYERS = "mechanical"
 
 
 def _ask_table_size() -> tuple[int, int]:
@@ -36,8 +42,6 @@ def _ask_table_size() -> tuple[int, int]:
         if rows < 2 or cols < 2:
             print("  need at least 2x2")
             continue
-        # Convention for generated tables: rpm_count along one axis, load along other.
-        # For Swicked bottom-left: columns ≈ RPM, rows ≈ load.
         return rows, cols
 
 
@@ -56,6 +60,12 @@ def main(argv: list[str] | None = None) -> int:
         default=_DEFAULT_PRESET,
         help=f"Preset name (default: {_DEFAULT_PRESET}), or 'none' to choose table size",
     )
+    p_new.add_argument(
+        "--layers",
+        choices=("mechanical", "full"),
+        default=_DEFAULT_LAYERS,
+        help="Timing layers to apply (default: mechanical only — review before full)",
+    )
     p_new.add_argument("--rpm", help="RPM start:stop:step (overrides generated/fixed axes)")
     p_new.add_argument("--load", help="Load start:stop:step (overrides generated/fixed axes)")
     p_new.add_argument("--model", choices=("research", "simple"), default="research")
@@ -63,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument("--cruise", type=float, default=28.0)
     p_new.add_argument("--wot", type=float, default=18.0)
     p_new.add_argument("--base-timing", type=int, default=None)
+    p_new.add_argument("--mech-at-peak-torque", type=int, default=None)
     p_new.add_argument("--idle-rpm", type=int, default=None)
     p_new.add_argument("--peak-torque-rpm", type=int, default=None)
     p_new.add_argument("--peak-hp", type=float, default=None)
@@ -124,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "new":
             interactive = not args.no_prompt and args.model == "research"
+            layers = args.layers
 
             if args.preset == "none":
                 preset_name = None
@@ -148,7 +160,6 @@ def main(argv: list[str] | None = None) -> int:
                     ],
                 )
 
-            # Output format: INI wins, then CLI flags, then preset defaults
             if ini:
                 layout = args.layout or ini.layout
                 export = args.export or ini.export
@@ -162,10 +173,9 @@ def main(argv: list[str] | None = None) -> int:
                 export = args.export or "swicked"
                 load_unit = "kPa"
 
-            # Build engine spec early — needed for generated axes
             if args.model == "research":
                 if interactive and sys.stdin.isatty():
-                    spec = prompt_engine_spec()
+                    spec = prompt_engine_spec(layers=layers)
                     if args.displacement is not None:
                         spec.displacement_cc = float(args.displacement)
                     if args.peak_hp is not None:
@@ -182,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
                         spec.boost_psi = float(args.boost_psi)
                     if args.base_timing is not None:
                         spec.base_timing = float(args.base_timing)
+                    if args.mech_at_peak_torque is not None:
+                        spec.mech_timing_at_peak_torque = float(args.mech_at_peak_torque)
                     if args.idle_rpm is not None:
                         spec.idle_rpm = float(args.idle_rpm)
                 else:
@@ -193,7 +205,8 @@ def main(argv: list[str] | None = None) -> int:
                         peak_torque_rpm=float(args.peak_torque_rpm or 4800),
                         redline_rpm=float(args.redline or 9300),
                         boost_psi=float(args.boost_psi if args.boost_psi is not None else 7),
-                        base_timing=float(args.base_timing or 15),
+                        base_timing=float(args.base_timing or 10),
+                        mech_timing_at_peak_torque=float(args.mech_at_peak_torque or 32),
                         idle_rpm=float(args.idle_rpm or 1100),
                     )
                 for warning in validate_power(spec):
@@ -209,7 +222,6 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 spec = EngineSpec()
 
-            # Axes
             if args.rpm and args.load:
                 rpm = parse_range(args.rpm)
                 load = parse_range(args.load)
@@ -223,7 +235,6 @@ def main(argv: list[str] | None = None) -> int:
                 rpm = generate_rpm_axis(spec, rpm_n)
                 load = generate_load_axis(spec, load_n, unit=load_unit)
             else:
-                # No preset: ask table size (rows x cols) → load_count x rpm_count for Swicked
                 if args.size:
                     a, b = args.size.lower().replace(" ", "").split("x", 1)
                     rows, cols = int(a), int(b)
@@ -231,7 +242,6 @@ def main(argv: list[str] | None = None) -> int:
                     rows, cols = _ask_table_size()
                 else:
                     rows, cols = 12, 12
-                # Swicked: columns = RPM, rows = load
                 rpm = generate_rpm_axis(spec, cols)
                 load = generate_load_axis(spec, rows, unit=load_unit)
                 print(f"Generated axes: {cols} RPM × {rows} load ({load_unit})")
@@ -246,7 +256,9 @@ def main(argv: list[str] | None = None) -> int:
                     raise ValueError("provide --out / -o")
 
             if args.model == "research":
-                table = generate_table(rpm, load, spec=spec, load_unit=load_unit)
+                table = generate_table(
+                    rpm, load, spec=spec, load_unit=load_unit, layers=layers
+                )
             else:
                 table = generate_baseline(
                     rpm, load, idle=args.idle, cruise=args.cruise, wot=args.wot
@@ -259,9 +271,15 @@ def main(argv: list[str] | None = None) -> int:
                 if ini
                 else (preset.origin if preset else "bottom_left")
             )
+            print(describe_mechanical_curve(spec))
+            if layers == "mechanical":
+                print(
+                    "(load axis is unused for timing in this layer — "
+                    "every load row matches the RPM curve)"
+                )
             print(
                 f"Wrote {out_path} ({table.shape[0]}×{table.shape[1]} {table.load_unit}, "
-                f"whole °, origin={origin}, export={export}, view={layout})"
+                f"whole °, layers={layers}, origin={origin}, export={export}, view={layout})"
             )
             if args.show or (interactive and sys.stdin.isatty()):
                 print()

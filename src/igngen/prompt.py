@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .model import EngineSpec
+from .model import EngineSpec, LayerName
 
 
 def _ask(prompt: str, default: float | int | str | None = None, *, cast=float):
@@ -26,7 +26,7 @@ def _ask(prompt: str, default: float | int | str | None = None, *, cast=float):
             print("  enter a number")
 
 
-def prompt_engine_spec() -> EngineSpec:
+def prompt_engine_spec(*, layers: LayerName = "mechanical") -> EngineSpec:
     print("IgnGen — engine inputs (Enter keeps the default)\n")
     displacement_cc = _ask("Displacement (cc)", 1600, cast=int)
     peak_hp = _ask("Peak horsepower", 280, cast=float)
@@ -35,14 +35,28 @@ def prompt_engine_spec() -> EngineSpec:
     peak_torque_rpm = _ask("RPM at peak torque", 4800, cast=int)
     redline_rpm = _ask("Redline / max RPM", 9300, cast=int)
     boost_psi = _ask("Max boost (psi, 0 = NA)", 7, cast=float)
-    base_timing = _ask("Base / idle timing (°BTDC)", 15, cast=int)
     idle_rpm = _ask("Target idle RPM", 1100, cast=int)
-    print("\n— Ignition corrections —")
-    idle_pocket_width = _ask("Idle pocket width (±RPM total span)", 250, cast=int)
-    vacuum_advance_per_kpa = _ask("Vacuum advance step (° per kPa below atm)", 0.35, cast=float)
-    vacuum_advance_max = _ask("Vacuum timing limit (total ° max)", 42, cast=int)
-    boost_retard_per_psi = _ask("Boost retard step (° per psi)", 1.5, cast=float)
-    boost_retard_max = _ask("Boost timing limit (total ° min)", 10, cast=int)
+
+    print("\n— Mechanical advance —")
+    base_timing = _ask("Base / initial timing (°BTDC)", 10, cast=int)
+    mech_at_tq = _ask("Total timing at peak torque (°)", 32, cast=int)
+
+    idle_pocket_width = 250.0
+    vacuum_advance_per_kpa = 0.35
+    vacuum_advance_max = 42.0
+    boost_retard_per_psi = 1.5
+    boost_retard_max = 10.0
+
+    if layers == "full":
+        print("\n— Load / vacuum / boost (full model) —")
+        idle_pocket_width = float(_ask("Idle pocket width (±RPM total span)", 250, cast=int))
+        vacuum_advance_per_kpa = float(
+            _ask("Vacuum advance step (° per kPa below atm)", 0.35, cast=float)
+        )
+        vacuum_advance_max = float(_ask("Vacuum timing limit (total ° max)", 42, cast=int))
+        boost_retard_per_psi = float(_ask("Boost retard step (° per psi)", 1.5, cast=float))
+        boost_retard_max = float(_ask("Boost timing limit (total ° min)", 10, cast=int))
+
     print()
     return EngineSpec(
         displacement_cc=float(displacement_cc),
@@ -53,6 +67,7 @@ def prompt_engine_spec() -> EngineSpec:
         redline_rpm=float(redline_rpm),
         boost_psi=float(boost_psi),
         base_timing=float(base_timing),
+        mech_timing_at_peak_torque=float(mech_at_tq),
         idle_rpm=float(idle_rpm),
         idle_pocket_width=float(idle_pocket_width),
         vacuum_advance_per_kpa=float(vacuum_advance_per_kpa),

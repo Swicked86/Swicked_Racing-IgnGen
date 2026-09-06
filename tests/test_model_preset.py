@@ -14,22 +14,23 @@ def test_alpha_preset_shape():
 
 def test_research_model_non_negative_whole_degrees():
     preset = get_preset("alpha")
-    table = generate_table(list(preset.rpm), list(preset.load), load_unit="inhg")
+    table = generate_table(
+        list(preset.rpm), list(preset.load), load_unit="inhg", layers="mechanical"
+    )
     assert table.shape == (20, 16)
     assert table.load_unit == "inHg"
     for row in table.values:
         for cell in row:
             assert float(cell).is_integer()
             assert cell >= 0
-    mid = len(preset.rpm) // 2
-    assert table.values[mid][0] >= table.values[mid][-1]
 
 
-def test_atmosphere_column_near_mechanical_curve():
+def test_atmosphere_matches_mechanical_at_peak_torque():
     spec = EngineSpec()
-    # ~0 inHg ≈ atmosphere in Alpha's gauge axis
-    atm_timing = timing_at(4800, inhg_gauge_to_kpa_abs(0.0), spec)
-    assert 25 <= atm_timing <= 35
+    atm_timing = timing_at(
+        4800, inhg_gauge_to_kpa_abs(0.0), spec, layers="mechanical"
+    )
+    assert atm_timing == 32
 
 
 def test_power_validation_catches_inconsistent_peak_torque():

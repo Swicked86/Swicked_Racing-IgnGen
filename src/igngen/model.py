@@ -1,18 +1,20 @@
 """Ignition surface model from Swicked Racing research notes.
 
-Vacuum advance and boost retard are asymmetric. Steps control how fast
-timing moves with MAP; limits are absolute total timing (° BTDC), not
-add/subtract amounts.
+Build in layers. Current default: mechanical advance only.
+Vacuum / boost / idle pocket / soft limit are staged next.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from .table import TimingTable
 from .units import inhg_gauge_to_kpa_abs
 
 KPA_PER_PSI = 6.895
+
+LayerName = Literal["mechanical", "full"]
 
 
 @dataclass
@@ -24,15 +26,16 @@ class EngineSpec:
     peak_torque_rpm: float = 4800.0
     redline_rpm: float = 9300.0
     boost_psi: float = 7.0
-    base_timing: float = 15.0
+    # Mechanical curve (configurable)
+    base_timing: float = 10.0
+    mech_timing_at_peak_torque: float = 32.0
     idle_rpm: float = 1100.0
+    # Later layers (kept for full model; unused when layers=mechanical)
     idle_pocket_width: float = 250.0
     soft_limit_rpm_before_redline: float = 500.0
     soft_limit_retard: float = 10.0
-    # Vacuum: ° added per kPa below atm; vacuum_advance_max = total ° ceiling
     vacuum_advance_per_kpa: float = 0.35
     vacuum_advance_max: float = 42.0
-    # Boost: ° removed per psi above atm; boost_retard_max = total ° floor
     boost_retard_per_psi: float = 1.5
     boost_retard_max: float = 10.0
     map_floor: float = 0.0
@@ -53,22 +56,32 @@ def validate_power(spec: EngineSpec) -> list[str]:
 
 
 def mechanical_advance(rpm: float, spec: EngineSpec) -> float:
+    """Distributor mechanical curve vs RPM (load-independent).
+
+    - At/below idle: base_timing (initial / static)
+    - Idle → peak torque RPM: smooth ramp to mech_timing_at_peak_torque
+    - Above peak torque: hold that total (no further climb)
+    """
     base = spec.base_timing
-    tq_target = 30.0
-    hp_target = 33.0
-    if rpm <= max(spec.idle_rpm, 1.0):
+    peak = spec.mech_timing_at_peak_torque
+    idle = max(spec.idle_rpm, 1.0)
+    if rpm <= idle:
         return base
-    if rpm <= spec.peak_torque_rpm:
-        t = (rpm - spec.idle_rpm) / max(spec.peak_torque_rpm - spec.idle_rpm, 1.0)
-        return base + (tq_target - base) * _smoothstep(t)
-    if rpm <= spec.peak_hp_rpm:
-        t = (rpm - spec.peak_torque_rpm) / max(spec.peak_hp_rpm - spec.peak_torque_rpm, 1.0)
-        return tq_target + (hp_target - tq_target) * _smoothstep(t)
-    return hp_target
+    if rpm >= spec.peak_torque_rpm:
+        return peak
+    t = (rpm - idle) / max(spec.peak_torque_rpm - idle, 1.0)
+    return base + (peak - base) * _smoothstep(t)
+
+
+def describe_mechanical_curve(spec: EngineSpec) -> str:
+    return (
+        f"Mechanical only: {spec.base_timing:.0f}° at idle "
+        f"({spec.idle_rpm:.0f} RPM) → {spec.mech_timing_at_peak_torque:.0f}° "
+        f"by peak torque ({spec.peak_torque_rpm:.0f} RPM), hold above"
+    )
 
 
 def pressure_delta(map_kpa: float, spec: EngineSpec) -> float:
-    """Uncapped MAP step only (°). Limits are applied as total timing in timing_at."""
     atm = spec.atm_kpa
     if map_kpa <= atm:
         return (atm - map_kpa) * spec.vacuum_advance_per_kpa
@@ -77,7 +90,6 @@ def pressure_delta(map_kpa: float, spec: EngineSpec) -> float:
 
 
 def pressure_correction(map_kpa: float, spec: EngineSpec) -> float:
-    """Backward-compatible name: MAP step delta (limits are total ° in timing_at)."""
     return pressure_delta(map_kpa, spec)
 
 
@@ -101,20 +113,27 @@ def soft_limit_correction(rpm: float, spec: EngineSpec) -> float:
     return -spec.soft_limit_retard * _smoothstep(t)
 
 
-def timing_at(rpm: float, map_kpa: float, spec: EngineSpec) -> int:
-    mech = mechanical_advance(rpm, spec)
+def timing_at(
+    rpm: float,
+    map_kpa: float,
+    spec: EngineSpec,
+    *,
+    layers: LayerName = "mechanical",
+) -> int:
+    if layers == "mechanical":
+        return int(round(max(0.0, mechanical_advance(rpm, spec))))
+
+    # full stack (kept for later; not the default yet)
     value = (
-        mech
+        mechanical_advance(rpm, spec)
         + pressure_delta(map_kpa, spec)
         + idle_pocket_correction(rpm, map_kpa, spec)
     )
     atm = spec.atm_kpa
-    # Limits are absolute total timing, not add/subtract caps
     if map_kpa < atm:
         value = min(value, spec.vacuum_advance_max)
     elif map_kpa > atm:
         value = max(value, spec.boost_retard_max)
-
     value += soft_limit_correction(rpm, spec)
 
     in_idle_pocket = (
@@ -122,15 +141,12 @@ def timing_at(rpm: float, map_kpa: float, spec: EngineSpec) -> int:
     )
     floor = spec.map_floor if in_idle_pocket else max(spec.map_floor, spec.normal_min)
     if soft_limit_correction(rpm, spec) < 0 or map_kpa > atm:
-        # boost / soft-limit may go below normal_min; still honor boost total floor
-        # unless soft limit is pulling further down for overspeed
         if map_kpa > atm and soft_limit_correction(rpm, spec) >= 0:
             floor = max(spec.map_floor, spec.boost_retard_max)
         else:
             floor = spec.map_floor
     ceiling = max(spec.map_ceiling, spec.vacuum_advance_max)
-    clamped = min(ceiling, max(floor, value))
-    return int(round(clamped))
+    return int(round(min(ceiling, max(floor, value))))
 
 
 def generate_table(
@@ -139,6 +155,7 @@ def generate_table(
     *,
     spec: EngineSpec | None = None,
     load_unit: str = "inhg",
+    layers: LayerName = "mechanical",
 ) -> TimingTable:
     spec = spec or EngineSpec()
     rpm_i = [float(int(round(r))) for r in rpm]
@@ -152,7 +169,7 @@ def generate_table(
                 map_kpa = inhg_gauge_to_kpa_abs(load_v, spec.atm_kpa)
             else:
                 map_kpa = float(load_v)
-            row.append(float(timing_at(r, map_kpa, spec)))
+            row.append(float(timing_at(r, map_kpa, spec, layers=layers)))
         values.append(row)
     return TimingTable(
         rpm=rpm_i,
