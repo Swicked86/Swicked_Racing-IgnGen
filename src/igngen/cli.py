@@ -27,15 +27,11 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument(
         "--preset",
         choices=sorted({p.name for p in PRESETS.values()}),
-        help="Axis preset (default: prompted as 'alpha')",
+        help="Axis preset: alpha (top-left, inHg) or base (bottom-left, kPa)",
     )
     p_new.add_argument("--rpm", help="RPM start:stop:step (ignored with --preset)")
     p_new.add_argument("--load", help="Load start:stop:step (ignored with --preset)")
-    p_new.add_argument(
-        "--model",
-        choices=("research", "simple"),
-        default="research",
-    )
+    p_new.add_argument("--model", choices=("research", "simple"), default="research")
     p_new.add_argument("--idle", type=float, default=12.0)
     p_new.add_argument("--cruise", type=float, default=28.0)
     p_new.add_argument("--wot", type=float, default=18.0)
@@ -54,14 +50,14 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument(
         "--layout",
         choices=_LAYOUTS,
-        default="swicked",
-        help="Terminal orientation (default: swicked = RPM→ Load↑)",
+        default=None,
+        help="Terminal orientation (default: follows preset — alpha→top-left, base→bottom-left)",
     )
     p_new.add_argument(
         "--export",
         choices=_EXPORTS,
-        default="swicked",
-        help="CSV orientation (default: swicked; use alpha for Alpha paste)",
+        default=None,
+        help="CSV orientation (default: follows preset)",
     )
 
     p_show = sub.add_parser("show", help="Print a timing table heatmap")
@@ -100,7 +96,10 @@ def main(argv: list[str] | None = None) -> int:
                     continue
                 seen.add(preset.name)
                 print(f"{preset.name}: {preset.description}")
-                print(f"  shape: {len(preset.rpm)}×{len(preset.load)}  load_unit={preset.load_unit}")
+                print(
+                    f"  shape: {len(preset.rpm)}×{len(preset.load)}  "
+                    f"load_unit={preset.load_unit}  origin={preset.origin}"
+                )
             return 0
 
         if args.command == "new":
@@ -113,6 +112,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 preset_name = "alpha" if not (args.rpm and args.load) else None
 
+            preset = None
             if preset_name:
                 preset = get_preset(preset_name)
                 rpm = list(preset.rpm)
@@ -124,6 +124,10 @@ def main(argv: list[str] | None = None) -> int:
                 rpm = parse_range(args.rpm)
                 load = parse_range(args.load)
                 load_unit = "inHg"
+
+            # Orientation follows the preset unless overridden
+            layout = args.layout or (preset.default_layout if preset else "swicked")
+            export = args.export or (preset.default_export if preset else "swicked")
 
             out_path = args.out
             if not out_path:
@@ -182,14 +186,15 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 table.load_unit = load_unit
 
-            save_table(table, out_path, export=args.export)
+            save_table(table, out_path, export=export)
+            origin = preset.origin if preset else "bottom_left"
             print(
                 f"Wrote {out_path} ({table.shape[0]}×{table.shape[1]} {table.load_unit}, "
-                f"whole °, export={args.export}, view={args.layout})"
+                f"whole °, origin={origin}, export={export}, view={layout})"
             )
             if args.show or (interactive and sys.stdin.isatty()):
                 print()
-                print(table.format_grid(layout=args.layout, color=True, precision=0))
+                print(table.format_grid(layout=layout, color=True, precision=0))
 
         elif args.command == "show":
             table = load_table(args.path)
