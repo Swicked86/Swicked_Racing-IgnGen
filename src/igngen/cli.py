@@ -1,1 +1,1 @@
-PLACEHOLDER_LOAD_FROM_FILE
+@/workspace/igngen-patch/cli_ONLY_CONTENT.py
