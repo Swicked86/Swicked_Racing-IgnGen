@@ -41,6 +41,8 @@ Optional later: compressor efficiency / NA base HP for turbo VE concepts (shared
    - MAP ≤ **50 kPa** (static) → **full** vacuum advance
    - 50 kPa → atmosphere (100 kPa) → linear taper to **0°**
    - ≥ atmosphere → **0°** vacuum (boost is a separate later layer)
+   - **RPM gate:** **0°** vacuum through the idle pocket; linear ramp to full
+     by ~pocket_hi+800 RPM (keeps idle corner on mechanical base)
    - Optional total ° **ceiling** under vacuum (default 42°)
 3. **Boost retard** (separate **total °** min — **not** a mirror of vacuum) — later layer
 4. **Idle pocket**: localized only around idle RPM ± pocket width and **light load only** — later layer
