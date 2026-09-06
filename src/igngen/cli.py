@@ -18,6 +18,7 @@ from .preset_ini import find_preset_ini
 from .presets import PRESETS, get_preset
 from .prompt import prompt_engine_spec, prompt_output_path, prompt_preset
 from .table import parse_range
+from .vehicles import describe_vehicle, find_vehicle, list_vehicles
 
 _LAYOUTS = ("swicked", "alpha")
 _EXPORTS = ("swicked", "alpha")
@@ -45,6 +46,30 @@ def _ask_table_size() -> tuple[int, int]:
         return rows, cols
 
 
+def _apply_cli_overrides(spec: EngineSpec, args: argparse.Namespace) -> EngineSpec:
+    if args.displacement is not None:
+        spec.displacement_cc = float(args.displacement)
+    if args.peak_hp is not None:
+        spec.peak_hp = float(args.peak_hp)
+    if args.peak_hp_rpm is not None:
+        spec.peak_hp_rpm = float(args.peak_hp_rpm)
+    if args.peak_torque is not None:
+        spec.peak_torque_lbft = float(args.peak_torque)
+    if args.peak_torque_rpm is not None:
+        spec.peak_torque_rpm = float(args.peak_torque_rpm)
+    if args.redline is not None:
+        spec.redline_rpm = float(args.redline)
+    if args.boost_psi is not None:
+        spec.boost_psi = float(args.boost_psi)
+    if args.base_timing is not None:
+        spec.base_timing = float(args.base_timing)
+    if args.mech_at_peak_torque is not None:
+        spec.mech_timing_at_peak_torque = float(args.mech_at_peak_torque)
+    if args.idle_rpm is not None:
+        spec.idle_rpm = float(args.idle_rpm)
+    return spec
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="igngen",
@@ -59,6 +84,11 @@ def main(argv: list[str] | None = None) -> int:
         choices=sorted({p.name for p in PRESETS.values()}) + ["none"],
         default=_DEFAULT_PRESET,
         help=f"Preset name (default: {_DEFAULT_PRESET}), or 'none' to choose table size",
+    )
+    p_new.add_argument(
+        "--vehicle",
+        default=None,
+        help="Vehicle profile (e.g. D16Z6) — fills engine/mech/pocket for RPM landmarks",
     )
     p_new.add_argument(
         "--layers",
@@ -114,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     p_conv.add_argument("--export", choices=_EXPORTS, default="swicked")
 
     sub.add_parser("presets", help="List axis presets")
+    sub.add_parser("vehicles", help="List vehicle profiles")
 
     args = parser.parse_args(argv)
 
@@ -133,15 +164,38 @@ def main(argv: list[str] | None = None) -> int:
                 )
             return 0
 
+        if args.command == "vehicles":
+            paths = list_vehicles()
+            if not paths:
+                print("No vehicle profiles found under vehicles/")
+                return 0
+            for path in paths:
+                v = find_vehicle(path.stem)
+                if v:
+                    print(describe_vehicle(v))
+                    print(f"  file: {v.path}")
+                    print()
+            return 0
+
         if args.command == "new":
             interactive = not args.no_prompt and args.model == "research"
             layers = args.layers
+            vehicle = None
+            if getattr(args, "vehicle", None):
+                vehicle = find_vehicle(args.vehicle)
+                if vehicle is None:
+                    known = ", ".join(p.stem for p in list_vehicles()) or "(none)"
+                    raise ValueError(
+                        f"unknown vehicle {args.vehicle!r}; known: {known}"
+                    )
+                print(describe_vehicle(vehicle))
+                print()
 
             if args.preset == "none":
                 preset_name = None
             elif args.preset:
                 preset_name = args.preset
-            elif interactive and sys.stdin.isatty():
+            elif interactive and sys.stdin.isatty() and vehicle is None:
                 preset_name = prompt_preset(_DEFAULT_PRESET)
                 if preset_name.strip().lower() in {"none", "no", "-"}:
                     preset_name = None
@@ -174,28 +228,12 @@ def main(argv: list[str] | None = None) -> int:
                 load_unit = "kPa"
 
             if args.model == "research":
-                if interactive and sys.stdin.isatty():
+                if vehicle is not None:
+                    spec = vehicle.spec
+                    spec = _apply_cli_overrides(spec, args)
+                elif interactive and sys.stdin.isatty():
                     spec = prompt_engine_spec(layers=layers)
-                    if args.displacement is not None:
-                        spec.displacement_cc = float(args.displacement)
-                    if args.peak_hp is not None:
-                        spec.peak_hp = float(args.peak_hp)
-                    if args.peak_hp_rpm is not None:
-                        spec.peak_hp_rpm = float(args.peak_hp_rpm)
-                    if args.peak_torque is not None:
-                        spec.peak_torque_lbft = float(args.peak_torque)
-                    if args.peak_torque_rpm is not None:
-                        spec.peak_torque_rpm = float(args.peak_torque_rpm)
-                    if args.redline is not None:
-                        spec.redline_rpm = float(args.redline)
-                    if args.boost_psi is not None:
-                        spec.boost_psi = float(args.boost_psi)
-                    if args.base_timing is not None:
-                        spec.base_timing = float(args.base_timing)
-                    if args.mech_at_peak_torque is not None:
-                        spec.mech_timing_at_peak_torque = float(args.mech_at_peak_torque)
-                    if args.idle_rpm is not None:
-                        spec.idle_rpm = float(args.idle_rpm)
+                    spec = _apply_cli_overrides(spec, args)
                 else:
                     spec = EngineSpec(
                         displacement_cc=float(args.displacement or 1600),
@@ -204,9 +242,13 @@ def main(argv: list[str] | None = None) -> int:
                         peak_torque_lbft=float(args.peak_torque or 189),
                         peak_torque_rpm=float(args.peak_torque_rpm or 4800),
                         redline_rpm=float(args.redline or 9300),
-                        boost_psi=float(args.boost_psi if args.boost_psi is not None else 7),
+                        boost_psi=float(
+                            args.boost_psi if args.boost_psi is not None else 7
+                        ),
                         base_timing=float(args.base_timing or 10),
-                        mech_timing_at_peak_torque=float(args.mech_at_peak_torque or 32),
+                        mech_timing_at_peak_torque=float(
+                            args.mech_at_peak_torque or 32
+                        ),
                         idle_rpm=float(args.idle_rpm or 1100),
                     )
                 for warning in validate_power(spec):
@@ -240,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.size:
                     a, b = args.size.lower().replace(" ", "").split("x", 1)
                     rows, cols = int(a), int(b)
-                elif interactive and sys.stdin.isatty():
+                elif interactive and sys.stdin.isatty() and vehicle is None:
                     rows, cols = _ask_table_size()
                 else:
                     rows, cols = 12, 12
@@ -253,10 +295,13 @@ def main(argv: list[str] | None = None) -> int:
 
             out_path = args.out
             if not out_path:
-                if interactive and sys.stdin.isatty():
-                    out_path = prompt_output_path("map.csv")
+                default_out = (
+                    f"map-{vehicle.name.lower()}.csv" if vehicle else "map.csv"
+                )
+                if interactive and sys.stdin.isatty() and vehicle is None:
+                    out_path = prompt_output_path(default_out)
                 else:
-                    raise ValueError("provide --out / -o")
+                    out_path = default_out
 
             if args.model == "research":
                 table = generate_table(
@@ -280,9 +325,11 @@ def main(argv: list[str] | None = None) -> int:
                     "(load axis is unused for timing in this layer — "
                     "every load row matches the RPM curve)"
                 )
+            veh_note = f", vehicle={vehicle.name}" if vehicle else ""
             print(
                 f"Wrote {out_path} ({table.shape[0]}×{table.shape[1]} {table.load_unit}, "
-                f"whole °, layers={layers}, origin={origin}, export={export}, view={layout})"
+                f"whole °, layers={layers}{veh_note}, origin={origin}, "
+                f"export={export}, view={layout})"
             )
             if args.show or (interactive and sys.stdin.isatty()):
                 print()
