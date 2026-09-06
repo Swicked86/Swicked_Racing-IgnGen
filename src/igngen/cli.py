@@ -16,6 +16,7 @@ from .table import parse_range
 
 _LAYOUTS = ("swicked", "alpha")
 _EXPORTS = ("swicked", "alpha")
+_DEFAULT_PRESET = "base"
 
 
 def _ask_table_size() -> tuple[int, int]:
@@ -52,7 +53,8 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument(
         "--preset",
         choices=sorted({p.name for p in PRESETS.values()}) + ["none"],
-        help="Preset name, or 'none' to choose table size and generate axes",
+        default=_DEFAULT_PRESET,
+        help=f"Preset name (default: {_DEFAULT_PRESET}), or 'none' to choose table size",
     )
     p_new.add_argument("--rpm", help="RPM start:stop:step (overrides generated/fixed axes)")
     p_new.add_argument("--load", help="Load start:stop:step (overrides generated/fixed axes)")
@@ -128,11 +130,11 @@ def main(argv: list[str] | None = None) -> int:
             elif args.preset:
                 preset_name = args.preset
             elif interactive and sys.stdin.isatty():
-                preset_name = prompt_preset("alpha")
+                preset_name = prompt_preset(_DEFAULT_PRESET)
                 if preset_name.strip().lower() in {"none", "no", "-"}:
                     preset_name = None
             else:
-                preset_name = "alpha" if not (args.rpm and args.load) else None
+                preset_name = _DEFAULT_PRESET if not (args.rpm and args.load) else None
 
             preset = None
             ini = None

@@ -66,5 +66,5 @@ def prompt_output_path(default: str = "map.csv") -> str:
     return str(_ask("Output file", default, cast=str))
 
 
-def prompt_preset(default: str = "alpha") -> str:
+def prompt_preset(default: str = "base") -> str:
     return str(_ask("Axis preset (alpha | base | none)", default, cast=str))
