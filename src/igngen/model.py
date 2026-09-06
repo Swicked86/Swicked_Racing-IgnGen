@@ -1,6 +1,6 @@
 """Ignition surface model from Swicked Racing research notes.
 
-Build in layers. Current review layer: mechanical + vacuum (total timing @ ≤40 kPa).
+Build in layers. Current review: mechanical + vacuum + boost (fan from 100 kPa).
 Boost / idle pocket / soft limit are staged next.
 """
 
@@ -14,7 +14,7 @@ from .units import inhg_gauge_to_kpa_abs
 
 KPA_PER_PSI = 6.895
 
-LayerName = Literal["mechanical", "vacuum", "full"]
+LayerName = Literal["mechanical", "vacuum", "boost", "full"]
 
 
 @dataclass
@@ -42,8 +42,10 @@ class EngineSpec:
     vacuum_advance_max: float = 50.0  # kept as soft ceiling (= total by default)
     # RPM where vacuum is fully phased in (0 = auto: pocket_hi + ramp)
     vacuum_full_rpm: float = 0.0
-    boost_retard_per_psi: float = 1.5
-    boost_retard_max: float = 10.0
+    boost_retard_per_psi: float = 1.5  # legacy rate; unused by boost layer
+    # Total ° minimum under full boost (mirror of vacuum_total_timing)
+    boost_timing_limit: float = 20.0
+    boost_retard_max: float = 20.0  # alias / floor compat (= boost_timing_limit)
     map_floor: float = 0.0
     map_ceiling: float = 50.0
     normal_min: float = 8.0
@@ -111,6 +113,28 @@ def vacuum_add_at_rpm(rpm: float, spec: EngineSpec) -> float:
 def vacuum_high_at_rpm(rpm: float, spec: EngineSpec) -> float:
     """Timing at ≤40 kPa: master (100 kPa) curve + scaled vacuum add."""
     return mechanical_advance(rpm, spec) + vacuum_add_at_rpm(rpm, spec)
+
+
+
+def boost_retard_full(spec: EngineSpec) -> float:
+    """Max boost retard (°): full mechanical minus boost timing limit."""
+    limit = float(getattr(spec, "boost_timing_limit", spec.boost_retard_max))
+    return max(0.0, float(spec.mech_timing_at_peak_torque) - limit)
+
+
+def boost_retard_at_rpm(rpm: float, spec: EngineSpec) -> float:
+    """Available boost retard at this RPM — full retard × mechanical progress."""
+    return boost_retard_full(spec) * mechanical_progress(rpm, spec)
+
+
+def boost_low_at_rpm(rpm: float, spec: EngineSpec) -> float:
+    """Timing at full boost: master curve minus scaled retard."""
+    return mechanical_advance(rpm, spec) - boost_retard_at_rpm(rpm, spec)
+
+
+def max_boost_map_kpa(spec: EngineSpec) -> float:
+    """Configured max boost MAP (atm + gauge boost). Overboost is above this."""
+    return float(spec.atm_kpa) + max(0.0, float(spec.boost_psi)) * KPA_PER_PSI
 
 
 def vacuum_advance(map_kpa: float, spec: EngineSpec) -> float:
@@ -185,35 +209,57 @@ def vacuum_row_timings(
     loads_kpa: list[float],
     spec: EngineSpec,
 ) -> list[int]:
-    """Whole-degree vacuum-layer timings for one RPM across load breakpoints.
+    """Vacuum-only row: boost side stays on the mechanical master curve."""
+    return pressure_row_timings(rpm, loads_kpa, spec, include_boost=False)
 
-    The 100 kPa (atmosphere) row is the master mechanical RPM curve.
-    Vacuum fans outward from that curve: available add =
-    (total_timing − peak_mech) × mechanical_progress(rpm).
-    Max total (e.g. 50° at ≤40 kPa) only when mechanical is all-in.
 
-    - MAP ≥ atm: mechanical (master)
-    - MAP ≤ 40 kPa: mechanical + scaled vacuum add
-    - Between: whole° staircase across those load cells
+def pressure_row_timings(
+    rpm: float,
+    loads_kpa: list[float],
+    spec: EngineSpec,
+    *,
+    include_boost: bool = True,
+) -> list[int]:
+    """Whole-degree timings fanning from the 100 kPa master curve.
+
+    Vacuum (below atm): add = (total − peak_mech) × mechanical_progress
+    Boost (above atm): retard = (peak_mech − boost_limit) × mechanical_progress
+    Full vac at ≤40 kPa; full retard at ≥ configured max boost MAP.
     """
     mech = int(round(mechanical_advance(rpm, spec)))
     high = int(round(vacuum_high_at_rpm(rpm, spec)))
+    low = int(round(boost_low_at_rpm(rpm, spec))) if include_boost else mech
     full_at = float(spec.vacuum_full_map_kpa)
     atm = float(spec.atm_kpa)
+    boost_full = max_boost_map_kpa(spec)
 
-    full_idxs = [i for i, m in enumerate(loads_kpa) if m <= full_at]
-    mid_idxs = [i for i, m in enumerate(loads_kpa) if full_at < m < atm]
-    atm_idxs = [i for i, m in enumerate(loads_kpa) if m >= atm]
+    vac_full_idxs = [i for i, x in enumerate(loads_kpa) if x <= full_at]
+    vac_mid_idxs = [i for i, x in enumerate(loads_kpa) if full_at < x < atm]
+    if include_boost:
+        atm_idxs = [i for i, x in enumerate(loads_kpa) if abs(x - atm) < 0.51]
+        boost_mid_idxs = [i for i, x in enumerate(loads_kpa) if atm < x < boost_full]
+        boost_full_idxs = [i for i, x in enumerate(loads_kpa) if x >= boost_full]
+    else:
+        atm_idxs = [i for i, x in enumerate(loads_kpa) if x >= atm]
+        boost_mid_idxs = []
+        boost_full_idxs = []
 
     out = [mech] * len(loads_kpa)
-    for i in full_idxs:
+    for i in vac_full_idxs:
         out[i] = high
+    vac_mids = _whole_degree_taper(high, mech, len(vac_mid_idxs))
+    for i, idx in enumerate(vac_mid_idxs):
+        out[idx] = vac_mids[i]
     for i in atm_idxs:
         out[i] = mech
-    mids = _whole_degree_taper(high, mech, len(mid_idxs))
-    for i, idx in enumerate(mid_idxs):
-        out[idx] = mids[i] if i < len(mids) else mech
+    if include_boost:
+        boost_mids = _whole_degree_taper(mech, low, len(boost_mid_idxs))
+        for i, idx in enumerate(boost_mid_idxs):
+            out[idx] = boost_mids[i]
+        for i in boost_full_idxs:
+            out[i] = low
     return out
+
 
 
 def describe_mechanical_curve(spec: EngineSpec) -> str:
@@ -230,7 +276,21 @@ def describe_vacuum_curve(spec: EngineSpec) -> str:
         f"Vacuum: fans from 100 kPa master curve; "
         f"+{add:.0f}° max → {spec.vacuum_total_timing:.0f}° at ≤{spec.vacuum_full_map_kpa:.0f} kPa "
         f"once mechanical is all-in ({spec.peak_torque_rpm:.0f} RPM); "
-        f"scaled by mechanical progress below that; whole° load-cell steps to atm"
+        f"scaled by mechanical progress; whole° load-cell steps to atm"
+    )
+
+
+def describe_boost_curve(spec: EngineSpec) -> str:
+    limit = float(getattr(spec, "boost_timing_limit", spec.boost_retard_max))
+    retard = boost_retard_full(spec)
+    mb = max_boost_map_kpa(spec)
+    if spec.boost_psi <= 0:
+        return "Boost: off (0 psi)"
+    return (
+        f"Boost: fans from 100 kPa master curve; "
+        f"−{retard:.0f}° max → {limit:.0f}° at ≥{mb:.0f} kPa "
+        f"once mechanical is all-in ({spec.peak_torque_rpm:.0f} RPM); "
+        f"scaled by mechanical progress; whole° load-cell steps from atm"
     )
 
 
@@ -279,52 +339,44 @@ def timing_at(
     if layers == "mechanical":
         return int(round(max(0.0, mech)))
 
-    if layers == "vacuum":
-        # Single-point approx (tables use vacuum_row_timings for whole° cells)
+    if layers in {"vacuum", "boost"}:
+        include_boost = layers == "boost"
         high = vacuum_high_at_rpm(rpm, spec)
+        low = boost_low_at_rpm(rpm, spec) if include_boost else mech
         full_at = float(spec.vacuum_full_map_kpa)
         atm = float(spec.atm_kpa)
+        boost_full = max_boost_map_kpa(spec)
         if map_kpa <= full_at:
             value = high
-        elif map_kpa >= atm:
-            value = mech
-        else:
+        elif map_kpa < atm:
             t = (map_kpa - full_at) / max(atm - full_at, 1.0)
             value = high + (mech - high) * t
+        elif map_kpa <= atm or not include_boost:
+            value = mech
+        elif map_kpa >= boost_full:
+            value = low
+        else:
+            t = (map_kpa - atm) / max(boost_full - atm, 1.0)
+            value = mech + (low - mech) * t
         return int(round(max(0.0, value)))
 
-    # full — vacuum total/RPM-gated; boost / idle / soft still staged here
-    atm = spec.atm_kpa
-    if map_kpa <= atm:
-        # reuse vacuum-layer absolute timing then add idle pocket on top
-        vac_abs = float(
-            timing_at(rpm, map_kpa, spec, layers="vacuum")
-        )
-        value = vac_abs + idle_pocket_correction(rpm, map_kpa, spec)
-    else:
-        over_psi = (map_kpa - atm) / KPA_PER_PSI
-        value = (
-            mech
-            - over_psi * spec.boost_retard_per_psi
-            + idle_pocket_correction(rpm, map_kpa, spec)
-        )
-    atm = spec.atm_kpa
-    if map_kpa < atm:
-        value = min(value, spec.vacuum_advance_max)
-    elif map_kpa > atm:
-        value = max(value, spec.boost_retard_max)
+    # full — boost layer + idle pocket / soft (staged extras)
+    base = float(timing_at(rpm, map_kpa, spec, layers="boost"))
+    value = base + idle_pocket_correction(rpm, map_kpa, spec)
     value += soft_limit_correction(rpm, spec)
-
+    atm = spec.atm_kpa
+    limit = float(getattr(spec, "boost_timing_limit", spec.boost_retard_max))
+    if map_kpa < atm:
+        value = min(value, spec.vacuum_total_timing)
+    elif map_kpa > atm:
+        value = max(value, limit)
     in_idle_pocket = (
         abs(rpm - spec.idle_rpm) <= spec.idle_pocket_width / 2.0 and map_kpa <= 60.0
     )
     floor = spec.map_floor if in_idle_pocket else max(spec.map_floor, spec.normal_min)
-    if soft_limit_correction(rpm, spec) < 0 or map_kpa > atm:
-        if map_kpa > atm and soft_limit_correction(rpm, spec) >= 0:
-            floor = max(spec.map_floor, spec.boost_retard_max)
-        else:
-            floor = spec.map_floor
-    ceiling = max(spec.map_ceiling, spec.vacuum_total_timing, spec.vacuum_advance_max)
+    if map_kpa > atm:
+        floor = max(floor, limit) if soft_limit_correction(rpm, spec) >= 0 else spec.map_floor
+    ceiling = max(spec.map_ceiling, spec.vacuum_total_timing)
     return int(round(min(ceiling, max(floor, value))))
 
 
@@ -352,6 +404,9 @@ def generate_table(
     for r in rpm_i:
         if layers == "vacuum":
             row_i = vacuum_row_timings(r, maps, spec)
+            values.append([float(v) for v in row_i])
+        elif layers == "boost":
+            row_i = pressure_row_timings(r, maps, spec, include_boost=True)
             values.append([float(v) for v in row_i])
         else:
             row: list[float] = []
