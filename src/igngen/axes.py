@@ -79,7 +79,6 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
         return _unique_sorted([cranking, idle, tq, overspeed], min_gap=50.0)[:count]
 
     remaining = count - len(low)
-    # 2:1 whole-zone budget (includes zone endpoints)
     dense_n = max(1, (remaining * 2) // 3)  # (pocket_hi, tq]
     sparse_n = max(1, remaining - dense_n)  # (tq, overspeed]
     if dense_n + sparse_n > remaining:
@@ -87,38 +86,30 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
 
     dense = _even_inclusive_end(pocket_hi, tq, dense_n)
 
-    # Sparse zone: always try to keep redline + overspeed, fill the rest evenly
-    sparse_ compulsory = _unique_sorted([redline, overspeed], min_gap=50.0)
-    sparse_compulsory = [v for v in sparse_compulsory if v > tq]
+    sparse_compulsory = [v for v in _unique_sorted([redline, overspeed], min_gap=50.0) if v > tq]
     if len(sparse_compulsory) >= sparse_n:
-        # keep overspeed, then redline
-        sparse = _unique_sorted([redline, overspeed], min_gap=50.0)
-        sparse = [v for v in sparse if v > tq][-sparse_n:]
+        sparse = [v for v in _unique_sorted([redline, overspeed], min_gap=50.0) if v > tq][
+            -sparse_n:
+        ]
     else:
         fill = sparse_n - len(sparse_compulsory)
-        mids = []
+        mids: list[float] = []
         if fill > 0:
-            # points in (tq, redline) preferentially
             top = redline if redline > tq + 50 else overspeed
-            mids = _even_inclusive_end(tq, top, fill + (1 if top not in sparse_compulsory else 0))
-            mids = [v for v in mids if v not in sparse_compulsory and v > tq]
-            # if we accidentally included top and it's compulsory, drop dup
-            mids = mids[:fill]
+            extra = 1 if top not in sparse_compulsory else 0
+            mids = _even_inclusive_end(tq, top, fill + extra)
+            mids = [v for v in mids if v not in sparse_compulsory and v > tq][:fill]
         sparse = _unique_sorted(mids + sparse_compulsory, min_gap=75.0)
-        # trim/pad to sparse_n
         while len(sparse) > sparse_n:
-            # drop the point closest to a neighbor (keep redline/overspeed)
-            protected = { _as_int(redline), _as_int(overspeed) }
+            protected = {_as_int(redline), _as_int(overspeed)}
             droppable = [v for v in sparse if v not in protected]
             if not droppable:
                 sparse = sparse[:sparse_n]
                 break
-            # drop first mid
             sparse = [v for v in sparse if v != droppable[0]]
         guard = 0
         while len(sparse) < sparse_n and guard < 20:
             guard += 1
-            # split largest gap in (tq, overspeed]
             seq = _unique_sorted([tq] + sparse + [overspeed], min_gap=1.0)
             best = None
             best_span = 0.0
@@ -137,7 +128,6 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
 
     axis = _unique_sorted(low + dense + sparse, min_gap=50.0)
 
-    # Final pad / trim to exact count — prefer dense zone
     guard = 0
     while len(axis) < count and guard < 40:
         guard += 1
@@ -166,7 +156,6 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
         axis = _unique_sorted(axis, min_gap=50.0)
 
     if len(axis) > count:
-        # drop from sparse zone first (not redline/overspeed/tq/idle/cranking)
         protected = {
             _as_int(cranking),
             _as_int(idle),
