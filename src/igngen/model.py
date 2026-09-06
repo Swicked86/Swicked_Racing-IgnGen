@@ -1,7 +1,7 @@
 """Ignition surface model from Swicked Racing research notes.
 
-Build in layers. Current default: mechanical advance only.
-Vacuum / boost / idle pocket / soft limit are staged next.
+Build in layers. Current review layer: mechanical + vacuum advance.
+Boost / idle pocket / soft limit are staged next.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from .units import inhg_gauge_to_kpa_abs
 
 KPA_PER_PSI = 6.895
 
-LayerName = Literal["mechanical", "full"]
+LayerName = Literal["mechanical", "vacuum", "full"]
 
 
 @dataclass
@@ -30,12 +30,15 @@ class EngineSpec:
     base_timing: float = 10.0
     mech_timing_at_peak_torque: float = 32.0
     idle_rpm: float = 1100.0
-    # Later layers (kept for full model; unused when layers=mechanical)
+    # Vacuum advance (additive; full-in MAP is static)
+    vacuum_advance: float = 10.0
+    vacuum_full_map_kpa: float = 50.0
+    # Later layers (kept for full model)
     idle_pocket_width: float = 250.0
     soft_limit_rpm_before_redline: float = 500.0
     soft_limit_retard: float = 10.0
-    vacuum_advance_per_kpa: float = 0.35
-    vacuum_advance_max: float = 42.0
+    vacuum_advance_per_kpa: float = 0.35  # legacy full-model rate; unused by vacuum layer
+    vacuum_advance_max: float = 42.0  # total ° ceiling under vacuum
     boost_retard_per_psi: float = 1.5
     boost_retard_max: float = 10.0
     map_floor: float = 0.0
@@ -74,18 +77,45 @@ def mechanical_advance(rpm: float, spec: EngineSpec) -> float:
     return base + (peak - base) * t
 
 
+def vacuum_advance(map_kpa: float, spec: EngineSpec) -> float:
+    """Additive vacuum advance vs MAP (RPM-independent).
+
+    Full advance at/below static ``vacuum_full_map_kpa`` (default **50 kPa**).
+    Linear taper from that MAP up to atmosphere → 0°. Above atm → 0°.
+    """
+    atm = spec.atm_kpa
+    full_at = spec.vacuum_full_map_kpa
+    add = spec.vacuum_advance
+    if map_kpa >= atm:
+        return 0.0
+    if map_kpa <= full_at:
+        return add
+    # full_at < map < atm
+    t = (map_kpa - full_at) / max(atm - full_at, 1.0)
+    return add * (1.0 - t)
+
+
 def describe_mechanical_curve(spec: EngineSpec) -> str:
     return (
-        f"Mechanical only: {spec.base_timing:.0f}° at idle "
+        f"Mechanical: {spec.base_timing:.0f}° at idle "
         f"({spec.idle_rpm:.0f} RPM) → linear to {spec.mech_timing_at_peak_torque:.0f}° "
         f"by peak torque ({spec.peak_torque_rpm:.0f} RPM), hold above"
     )
 
 
+def describe_vacuum_curve(spec: EngineSpec) -> str:
+    return (
+        f"Vacuum: +{spec.vacuum_advance:.0f}° full at ≤{spec.vacuum_full_map_kpa:.0f} kPa, "
+        f"taper to 0° by atm ({spec.atm_kpa:.0f} kPa); "
+        f"total ceiling {spec.vacuum_advance_max:.0f}°"
+    )
+
+
 def pressure_delta(map_kpa: float, spec: EngineSpec) -> float:
+    """Legacy full-model vac/boost blend (boost path still used by layers=full)."""
     atm = spec.atm_kpa
     if map_kpa <= atm:
-        return (atm - map_kpa) * spec.vacuum_advance_per_kpa
+        return vacuum_advance(map_kpa, spec)
     over_psi = (map_kpa - atm) / KPA_PER_PSI
     return -over_psi * spec.boost_retard_per_psi
 
@@ -121,11 +151,20 @@ def timing_at(
     *,
     layers: LayerName = "mechanical",
 ) -> int:
-    if layers == "mechanical":
-        return int(round(max(0.0, mechanical_advance(rpm, spec))))
+    mech = mechanical_advance(rpm, spec)
 
+    if layers == "mechanical":
+        return int(round(max(0.0, mech)))
+
+    if layers == "vacuum":
+        value = mech + vacuum_advance(map_kpa, spec)
+        if map_kpa < spec.atm_kpa:
+            value = min(value, spec.vacuum_advance_max)
+        return int(round(max(0.0, value)))
+
+    # full — vacuum uses new curve; boost / idle / soft still staged here
     value = (
-        mechanical_advance(rpm, spec)
+        mech
         + pressure_delta(map_kpa, spec)
         + idle_pocket_correction(rpm, map_kpa, spec)
     )

@@ -6,13 +6,13 @@ Source of truth for behavior. Code should match this; Alpha is a **preset/export
 
 Review each layer before enabling the next:
 
-1. **`mechanical` (current default)** — RPM-only curve; load rows are identical
-2. Vacuum advance
+1. **`mechanical`** — RPM-only curve; load rows are identical
+2. **`vacuum` (current review)** — mechanical + vacuum advance
 3. Boost retard
 4. Idle pocket
 5. Soft redline retard
 
-CLI: `igngen new` → `--layers mechanical` (default). Use `--layers full` only after mechanical looks right.
+CLI: `igngen new --layers mechanical|vacuum|full` (default **`vacuum`** while reviewing this layer).
 
 ## Inputs
 
@@ -26,6 +26,8 @@ User supplies (prompted):
 - Target idle RPM
 - **Base / initial timing** (°BTDC, whole degrees) — default **10°** (small-cam / low-perf may want less)
 - **Total timing at peak torque** — default **32°** (safe mechanical all-in)
+- **Vacuum advance** (additive °) — default **10°**; full-in MAP is static **50 kPa**
+- Optional: vacuum total ° ceiling (default **42°**)
 
 Optional later: compressor efficiency / NA base HP for turbo VE concepts (shared with future fuel maps).
 
@@ -35,7 +37,11 @@ Optional later: compressor efficiency / NA base HP for turbo VE concepts (shared
    - ≤ idle → base timing
    - idle → peak-torque RPM → ramp to total-at-peak-torque
    - above peak torque → **hold** (no further climb)
-2. **Vacuum advance** under vacuum (separate **total °** max) — later layer
+2. **Vacuum advance** (additive ° under vacuum):
+   - MAP ≤ **50 kPa** (static) → **full** vacuum advance
+   - 50 kPa → atmosphere (100 kPa) → linear taper to **0°**
+   - ≥ atmosphere → **0°** vacuum (boost is a separate later layer)
+   - Optional total ° **ceiling** under vacuum (default 42°)
 3. **Boost retard** (separate **total °** min — **not** a mirror of vacuum) — later layer
 4. **Idle pocket**: localized only around idle RPM ± pocket width and **light load only** — later layer
 5. **Soft power loss**: start retarding ~500 RPM before redline — later layer
