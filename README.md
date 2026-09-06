@@ -1,8 +1,8 @@
 # Swicked Racing — IgnGen
 
-Python CLI for generating and editing **ignition timing tables** (spark advance maps).
+Python CLI that generates **ignition timing tables** for tuners — aimed first at **ALPHAlink-style Honda ECU grids** (RPM × Load in inHg, heatmap-friendly values).
 
-IgnGen works with portable **CSV / JSON** tables (RPM × load grids of degrees BTDC). ECU-specific binary exporters can come later — v1 stays tuner-friendly and format-agnostic.
+High vs low cam tables are the same shape for now; we can specialize later.
 
 ## Install
 
@@ -12,59 +12,51 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e ".[dev]"
 ```
 
-## Quickstart
-
-Generate a baseline map and write CSV:
+## ALPHAlink quickstart (20×16 High Cam grid)
 
 ```bash
-igngen new --rpm 500:8000:500 --load 20:100:10 \
-  --idle 12 --cruise 28 --wot 18 \
-  --out timing.csv
-
-igngen show timing.csv
-igngen bump timing.csv --by 1.5 --out timing_plus.csv
-igngen clamp timing.csv --min 0 --max 40 --out timing_clamped.csv
+igngen presets
+igngen new --preset alphalink-high-cam --out high_cam_ignition.csv --show
 ```
 
-## Timing model (v1 assumptions)
+That uses the exact RPM / Load(inHg) breakpoints from an ALPHAlink High Cam Ignition table:
 
-Baseline maps blend three targets across the load axis:
+- **20 RPM rows** (0 … 9000)
+- **16 Load columns** (−90.1 … 77.7 inHg, vacuum → boost)
+- CSV layout matches ALPHAlink: `rpm` in the first column, load across the top
 
-| Region | Load (default interpretation) | Target |
-|--------|-------------------------------|--------|
-| Idle / light | low load | `--idle` °BTDC |
-| Cruise | mid load | `--cruise` °BTDC |
-| WOT | high load | `--wot` °BTDC |
+`--show` prints a **heatmap** (red/pink = more advance, blue = low/zero) in the ALPHAlink row/column orientation.
 
-An optional RPM advance curve adds degrees as RPM rises (`--rpm-slope` ° per 1000 RPM above `--rpm-base`). Values are then clamped to `--min` / `--max`.
+## Research timing model
 
-These are **starting points for tuning**, not safe-for-engine prescriptions. Always validate on a dyno / with proper knock monitoring.
+Default `--model research` builds the map from engine landmarks (base timing, idle pocket, peak-torque anchor, vacuum advance, boost retard, soft redline retard) — the Swicked Racing / ChatGPT research direction — not a single idle/cruise/WOT blend.
+
+```bash
+igngen new --preset alphalink-high-cam \
+  --base-timing 15 --idle-rpm 1100 \
+  --peak-torque-rpm 4800 --peak-hp-rpm 7800 \
+  --redline 9300 --boost-psi 7 \
+  --out map.csv --show
+```
+
+Use `--model simple` for the older idle/cruise/WOT blend.
 
 ## Commands
 
 | Command | What it does |
 |---------|----------------|
-| `igngen new` | Create a baseline table and export CSV/JSON |
-| `igngen show` | Print a table as a terminal grid |
-| `igngen bump` | Add/subtract degrees (global) |
-| `igngen clamp` | Clamp all cells to a min/max |
-| `igngen convert` | Convert between CSV and JSON |
+| `igngen presets` | List axis presets |
+| `igngen new` | Generate a table (preset or custom axes) |
+| `igngen show` | Heatmap print (`--layout alphalink\|swicked`) |
+| `igngen bump` / `clamp` / `convert` | Edit / convert tables |
 
-Run `igngen --help` or `igngen <command> --help` for flags.
+## Orientation layers
 
-## CSV layout
+Internal storage is always **RPM ascending × load ascending**.
 
-- First column header: `rpm`
-- Remaining headers: load breakpoints (numbers)
-- Each row: RPM, then timing cells
-
-Example:
-
-```csv
-rpm,20,30,40,50,60,70,80,90,100
-500,12.0,14.0,...
-1000,13.0,15.0,...
-```
+- **Display `alphalink`**: RPM top→bottom, load left→right (matches the ALPHAlink UI)
+- **Display `swicked`**: load high→low rows, RPM left→right (preferred reading layout from research notes)
+- **CSV export**: ALPHAlink-friendly by default (rpm rows, load columns)
 
 ## Tests
 
@@ -72,8 +64,6 @@ rpm,20,30,40,50,60,70,80,90,100
 pytest
 ```
 
-## Roadmap ideas
+## Notes / safety
 
-- Region-based bump (RPM/load window)
-- ECU-specific exporters (Haltech, Holley, MegaSquirt, …)
-- Import from common tune formats
+Generated maps are **starting points for calibration**, not safe-for-engine prescriptions. Validate on a dyno with knock monitoring. Proprietary `.bin` writers are out of scope for v1 — CSV/JSON bridge into tools like ALPHAlink first.
