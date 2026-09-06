@@ -8,11 +8,16 @@ from .heatmap import colorize_timing
 
 @dataclass
 class TimingTable:
-    """RPM × load ignition timing grid (degrees BTDC, whole numbers)."""
+    """RPM × load ignition timing grid (degrees BTDC, whole numbers).
+
+    Internal storage is always:
+      rpm ascending, load ascending, values[rpm_i][load_j]
+    Display/export orientation is applied at render time.
+    """
 
     rpm: list[float]
     load: list[float]
-    values: list[list[float]]  # values[rpm_i][load_j] — stored as floats but whole °
+    values: list[list[float]]
     load_unit: str = "inHg"
 
     def __post_init__(self) -> None:
@@ -25,7 +30,6 @@ class TimingTable:
         for row in self.values:
             if len(row) != len(self.load):
                 raise ValueError("each values row must match load count")
-        # normalize to whole degrees
         self.values = [[float(int(round(c))) for c in row] for row in self.values]
 
     @property
@@ -59,14 +63,19 @@ class TimingTable:
         self,
         *,
         precision: int = 0,
-        layout: str = "alphalink",
+        layout: str = "swicked",
         color: bool = True,
     ) -> str:
-        if layout == "swicked":
-            return self._format_swicked(precision=precision, color=color)
-        return self._format_alphalink(precision=precision, color=color)
+        """Render a terminal heatmap.
 
-    def _format_alphalink(self, *, precision: int, color: bool) -> str:
+        ``swicked`` (default): RPM → , Load ↑ (high load at top) — research preference.
+        ``alpha``: RPM ↓ rows, Load → columns — Alpha on-screen orientation.
+        """
+        if layout in {"alpha", "alphalink"}:
+            return self._format_alpha(precision=precision, color=color)
+        return self._format_swicked(precision=precision, color=color)
+
+    def _format_alpha(self, *, precision: int, color: bool) -> str:
         hdr = ["rpm"] + [_fmt(x, 2) for x in self.load]
         widths = [max(len("rpm"), 6)] + [max(len(h), 4) for h in hdr[1:]]
         for i, rpm in enumerate(self.rpm):
@@ -78,7 +87,7 @@ class TimingTable:
             return "  ".join(c.rjust(widths[i]) for i, c in enumerate(cols))
 
         lines = [
-            f"Load ({self.load_unit}) →",
+            "Load →",
             plain_row(hdr),
             plain_row(["-" * w for w in widths]),
         ]
@@ -106,7 +115,7 @@ class TimingTable:
             return "  ".join(c.rjust(widths[i]) for i, c in enumerate(cols))
 
         lines = [
-            "Load ↑  (high load at top)",
+            "Load ↑",
             plain_row(hdr),
             plain_row(["-" * w for w in widths]),
         ]
