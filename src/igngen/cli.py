@@ -2,17 +2,42 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from . import __version__
+from .axes import generate_load_axis, generate_rpm_axis
 from .generate import generate_baseline
 from .io_files import load_table, save_table
 from .model import EngineSpec, generate_table, validate_power
+from .preset_ini import find_preset_ini
 from .presets import PRESETS, get_preset
 from .prompt import prompt_engine_spec, prompt_output_path, prompt_preset
 from .table import parse_range
 
 _LAYOUTS = ("swicked", "alpha")
 _EXPORTS = ("swicked", "alpha")
+
+
+def _ask_table_size() -> tuple[int, int]:
+    print("Table size (no preset) — examples: 8x8, 12x12, 12x24")
+    while True:
+        raw = input("Size [rows x cols, default 12x12]: ").strip() or "12x12"
+        raw = raw.lower().replace(" ", "")
+        if "x" not in raw:
+            print("  use like 12x12")
+            continue
+        a, b = raw.split("x", 1)
+        try:
+            rows, cols = int(a), int(b)
+        except ValueError:
+            print("  enter integers")
+            continue
+        if rows < 2 or cols < 2:
+            print("  need at least 2x2")
+            continue
+        # Convention for generated tables: rpm_count along one axis, load along other.
+        # For Swicked bottom-left: columns ≈ RPM, rows ≈ load.
+        return rows, cols
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,11 +51,11 @@ def main(argv: list[str] | None = None) -> int:
     p_new = sub.add_parser("new", help="Generate a timing table (prompts for engine inputs)")
     p_new.add_argument(
         "--preset",
-        choices=sorted({p.name for p in PRESETS.values()}),
-        help="Axis preset: alpha (top-left, inHg) or base (bottom-left, kPa)",
+        choices=sorted({p.name for p in PRESETS.values()}) + ["none"],
+        help="Preset name, or 'none' to choose table size and generate axes",
     )
-    p_new.add_argument("--rpm", help="RPM start:stop:step (ignored with --preset)")
-    p_new.add_argument("--load", help="Load start:stop:step (ignored with --preset)")
+    p_new.add_argument("--rpm", help="RPM start:stop:step (overrides generated/fixed axes)")
+    p_new.add_argument("--load", help="Load start:stop:step (overrides generated/fixed axes)")
     p_new.add_argument("--model", choices=("research", "simple"), default="research")
     p_new.add_argument("--idle", type=float, default=12.0)
     p_new.add_argument("--cruise", type=float, default=28.0)
@@ -47,18 +72,9 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument("--out", "-o", default=None)
     p_new.add_argument("--show", action="store_true")
     p_new.add_argument("--no-prompt", action="store_true")
-    p_new.add_argument(
-        "--layout",
-        choices=_LAYOUTS,
-        default=None,
-        help="Terminal orientation (default: follows preset — alpha→top-left, base→bottom-left)",
-    )
-    p_new.add_argument(
-        "--export",
-        choices=_EXPORTS,
-        default=None,
-        help="CSV orientation (default: follows preset)",
-    )
+    p_new.add_argument("--layout", choices=_LAYOUTS, default=None)
+    p_new.add_argument("--export", choices=_EXPORTS, default=None)
+    p_new.add_argument("--size", help="Table size when no preset, e.g. 12x12 (rows x cols)")
 
     p_show = sub.add_parser("show", help="Print a timing table heatmap")
     p_show.add_argument("path")
@@ -95,47 +111,56 @@ def main(argv: list[str] | None = None) -> int:
                 if preset.name in seen:
                     continue
                 seen.add(preset.name)
+                ini = find_preset_ini(preset.name, search_dirs=[Path.cwd() / "presets"])
+                ini_note = f"  ini={ini.path}" if ini else "  ini=(missing)"
                 print(f"{preset.name}: {preset.description}")
                 print(
                     f"  shape: {len(preset.rpm)}×{len(preset.load)}  "
-                    f"load_unit={preset.load_unit}  origin={preset.origin}"
+                    f"load_unit={preset.load_unit}  origin={preset.origin}{ini_note}"
                 )
             return 0
 
         if args.command == "new":
             interactive = not args.no_prompt and args.model == "research"
 
-            if args.preset:
+            if args.preset == "none":
+                preset_name = None
+            elif args.preset:
                 preset_name = args.preset
             elif interactive and sys.stdin.isatty():
                 preset_name = prompt_preset("alpha")
+                if preset_name.strip().lower() in {"none", "no", "-"}:
+                    preset_name = None
             else:
                 preset_name = "alpha" if not (args.rpm and args.load) else None
 
             preset = None
+            ini = None
             if preset_name:
                 preset = get_preset(preset_name)
-                rpm = list(preset.rpm)
-                load = list(preset.load)
+                ini = find_preset_ini(
+                    preset_name,
+                    search_dirs=[
+                        Path.cwd() / "presets",
+                        Path(__file__).resolve().parents[2] / "presets",
+                    ],
+                )
+
+            # Output format: INI wins, then CLI flags, then preset defaults
+            if ini:
+                layout = args.layout or ini.layout
+                export = args.export or ini.export
+                load_unit = ini.load_unit
+            elif preset:
+                layout = args.layout or preset.default_layout
+                export = args.export or preset.default_export
                 load_unit = preset.load_unit
             else:
-                if not args.rpm or not args.load:
-                    raise ValueError("provide --preset or both --rpm and --load")
-                rpm = parse_range(args.rpm)
-                load = parse_range(args.load)
-                load_unit = "inHg"
+                layout = args.layout or "swicked"
+                export = args.export or "swicked"
+                load_unit = "kPa"
 
-            # Orientation follows the preset unless overridden
-            layout = args.layout or (preset.default_layout if preset else "swicked")
-            export = args.export or (preset.default_export if preset else "swicked")
-
-            out_path = args.out
-            if not out_path:
-                if interactive and sys.stdin.isatty():
-                    out_path = prompt_output_path("map.csv")
-                else:
-                    raise ValueError("provide --out / -o (or run interactively in a terminal)")
-
+            # Build engine spec early — needed for generated axes
             if args.model == "research":
                 if interactive and sys.stdin.isatty():
                     spec = prompt_engine_spec()
@@ -179,6 +204,46 @@ def main(argv: list[str] | None = None) -> int:
                             file=sys.stderr,
                         )
                         spec.peak_torque_lbft = tq_needed
+            else:
+                spec = EngineSpec()
+
+            # Axes
+            if args.rpm and args.load:
+                rpm = parse_range(args.rpm)
+                load = parse_range(args.load)
+            elif preset and (not ini or ini.axes == "fixed"):
+                rpm = list(preset.rpm)
+                load = list(preset.load)
+                load_unit = preset.load_unit
+            elif preset and ini and ini.axes == "generated":
+                rpm_n = ini.rpm_count or len(preset.rpm)
+                load_n = ini.load_count or len(preset.load)
+                rpm = generate_rpm_axis(spec, rpm_n)
+                load = generate_load_axis(spec, load_n, unit=load_unit)
+            else:
+                # No preset: ask table size (rows x cols) → load_count x rpm_count for Swicked
+                if args.size:
+                    a, b = args.size.lower().replace(" ", "").split("x", 1)
+                    rows, cols = int(a), int(b)
+                elif interactive and sys.stdin.isatty():
+                    rows, cols = _ask_table_size()
+                else:
+                    rows, cols = 12, 12
+                # Swicked: columns = RPM, rows = load
+                rpm = generate_rpm_axis(spec, cols)
+                load = generate_load_axis(spec, rows, unit=load_unit)
+                print(f"Generated axes: {cols} RPM × {rows} load ({load_unit})")
+                print(f"  RPM:  {rpm}")
+                print(f"  Load: {load}")
+
+            out_path = args.out
+            if not out_path:
+                if interactive and sys.stdin.isatty():
+                    out_path = prompt_output_path("map.csv")
+                else:
+                    raise ValueError("provide --out / -o")
+
+            if args.model == "research":
                 table = generate_table(rpm, load, spec=spec, load_unit=load_unit)
             else:
                 table = generate_baseline(
@@ -187,7 +252,11 @@ def main(argv: list[str] | None = None) -> int:
                 table.load_unit = load_unit
 
             save_table(table, out_path, export=export)
-            origin = preset.origin if preset else "bottom_left"
+            origin = (
+                ini.origin
+                if ini
+                else (preset.origin if preset else "bottom_left")
+            )
             print(
                 f"Wrote {out_path} ({table.shape[0]}×{table.shape[1]} {table.load_unit}, "
                 f"whole °, origin={origin}, export={export}, view={layout})"
