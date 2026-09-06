@@ -8,9 +8,14 @@ RPM columns: low anchors always include the idle **pocket**
 Profile / user landmarks stay exact. Generated filler RPMs snap to
 increments of 50.
 
-Load axis: landmarks through max boost, plus **one overboost** point at
-the next round number above max MAP (same idea as overspeed past redline).
-Never pads further past that overboost ceiling.
+Load axis: landmarks through vehicle max boost/MAP (from the loaded
+profile — any engine / edited defaults), plus **one overboost** row.
+Overboost is **one logical round past** how max MAP "reads" on the
+boost-region round ladder (not max+constant):
+  snap max to nearest logical round (midpoint; ties read up),
+  then take the next logical round after that.
+Example: ~172 kPa reads as 180 → overboost **200**.
+Ceiling stops there; no filler walk past overboost.
 """
 
 from __future__ import annotations
@@ -22,8 +27,9 @@ from .model import EngineSpec
 
 RPM_FILL_STEP = 50
 KPA_PER_PSI = 6.895
-LOAD_OVERBOOST_STEP_KPA = 10
-LOAD_OVERBOOST_STEP_INHG = 5
+# Spacing of the *logical round ladder* above atmosphere (not "add N to max").
+LOGICAL_MAP_LADDER_KPA = 20.0
+LOGICAL_MAP_LADDER_INHG = 5.0
 
 
 @dataclass(frozen=True)
@@ -42,13 +48,49 @@ def _snap_rpm(v: float, *, step: int = RPM_FILL_STEP) -> float:
     return float(int(round(v / step) * step))
 
 
-def _next_round_above(value: float, step: float) -> float:
-    """Smallest multiple of `step` strictly above `value` (overboost headroom)."""
+def _logical_rounds_above(start: float, ladder: float, past: float) -> list[float]:
+    """Ascending logical round ladder from `start`, extending past `past`."""
+    rounds: list[float] = []
+    v = float(start)
+    # enough headroom for snap + one step over
+    limit = float(past) + 4 * ladder
+    while v <= limit:
+        rounds.append(float(int(round(v))))
+        v += ladder
+    return rounds
+
+
+def _snap_to_logical(value: float, rounds: list[float]) -> float:
+    """Nearest logical round; exact midpoint ties read upward."""
     v = float(value)
-    n = math.ceil(v / step) * step
-    if n <= v + 1e-9:
-        n += step
-    return float(int(round(n)))
+    if not rounds:
+        return _as_int(v)
+    # Find neighboring rounds
+    lo = rounds[0]
+    hi = rounds[-1]
+    for i, r in enumerate(rounds):
+        if r <= v:
+            lo = r
+        if r >= v:
+            hi = r
+            break
+    if lo == hi:
+        return float(lo)
+    mid = (lo + hi) / 2.0
+    # at/above mid → higher round ("read up")
+    return float(hi if v >= mid else lo)
+
+
+def _overboost_from_logical(value: float, rounds: list[float]) -> float:
+    """One logical step over how `value` reads on the round ladder."""
+    snapped = _snap_to_logical(value, rounds)
+    for r in rounds:
+        if r > snapped + 1e-9:
+            return float(r)
+    # extend one more ladder step if we ran out
+    if len(rounds) >= 2:
+        return float(rounds[-1] + (rounds[-1] - rounds[-2]))
+    return float(snapped + LOGICAL_MAP_LADDER_KPA)
 
 
 def _unique_sorted(values: list[float], *, min_gap: float = 1.0) -> list[float]:
@@ -279,13 +321,18 @@ def _max_load_inhg(spec: EngineSpec) -> float:
 
 
 def _overboost_kpa(spec: EngineSpec) -> float:
-    """One headroom MAP past vehicle max — next round ×10 (like overspeed)."""
-    return _next_round_above(_max_load_kpa(spec), LOAD_OVERBOOST_STEP_KPA)
+    """Overboost = one logical MAP round past how profile max reads."""
+    max_map = _max_load_kpa(spec)
+    atm = float(spec.atm_kpa)
+    rounds = _logical_rounds_above(atm, LOGICAL_MAP_LADDER_KPA, max_map)
+    return _overboost_from_logical(max_map, rounds)
 
 
 def _overboost_inhg(spec: EngineSpec) -> float:
-    """One headroom boost past vehicle max — next round ×5 inHg."""
-    return _next_round_above(_max_load_inhg(spec), LOAD_OVERBOOST_STEP_INHG)
+    """Overboost = one logical inHg round past how profile max reads."""
+    max_b = _max_load_inhg(spec)
+    rounds = _logical_rounds_above(0.0, LOGICAL_MAP_LADDER_INHG, max_b)
+    return _overboost_from_logical(max_b, rounds)
 
 
 def load_landmarks_kpa(spec: EngineSpec) -> list[Landmark]:

@@ -20,8 +20,14 @@ it must not freeze the RPM curve.
 
 Landmark-priority; **atmosphere is mandatory** (`100` kPa / `0` inHg).
 
-Through vehicle **max boost / MAP**, then **one overboost** breakpoint at the
-next round number above that max (kPa ×10, inHg ×5) — same idea as RPM
-overspeed. Ceiling stops there; no filler walk past overboost.
+Through vehicle **max boost / MAP** (from whatever the loaded profile has —
+including values edited after defaults), then **one overboost** row:
+
+1. Snap max MAP to the nearest **logical round** on the boost-region ladder
+   (midpoint; ties read up) — e.g. ~172 → reads as **180**.
+2. Overboost = **one logical step past** that read — e.g. **200**.
+
+This is not “max + N kPa”; it is one step over on the round ladder.
+Ceiling stops at overboost; no filler walk past it.
 
 Implemented in `src/igngen/axes.py`.
