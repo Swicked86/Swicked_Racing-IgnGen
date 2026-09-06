@@ -47,7 +47,6 @@ def find_vehicle(name: str, search_dirs: list[Path] | None = None) -> VehiclePro
         for candidate in (d / f"{key}.ini", d / f"{key.upper()}.ini", d / f"{name}.ini"):
             if candidate.is_file():
                 return load_vehicle(candidate)
-        # case-insensitive scan
         if d.is_dir():
             for path in d.glob("*.ini"):
                 if path.stem.lower() == key:
@@ -61,6 +60,7 @@ def load_vehicle(path: Path) -> VehicleProfile:
     veh = cp["vehicle"] if cp.has_section("vehicle") else {}
     eng = cp["engine"] if cp.has_section("engine") else {}
     mech = cp["mechanical"] if cp.has_section("mechanical") else {}
+    vac = cp["vacuum"] if cp.has_section("vacuum") else {}
 
     def f(section, key, default: float) -> float:
         if key not in section:
@@ -74,7 +74,6 @@ def load_vehicle(path: Path) -> VehicleProfile:
     if "boost_psi" in eng:
         boost_psi = float(eng.get("boost_psi"))
     elif boost_bar_abs is not None:
-        # treat as absolute MAP; gauge boost over 1.00 bar atm
         boost_psi = max(0.0, (boost_bar_abs - 1.0) * BAR_TO_PSI)
     else:
         boost_psi = 0.0
@@ -91,6 +90,9 @@ def load_vehicle(path: Path) -> VehicleProfile:
         idle_pocket_width=f(eng, "idle_pocket_width", 250),
         base_timing=f(mech, "base_timing", 10),
         mech_timing_at_peak_torque=f(mech, "mech_timing_at_peak_torque", 32),
+        vacuum_advance=f(vac, "vacuum_advance", 10),
+        vacuum_full_map_kpa=f(vac, "vacuum_full_map_kpa", 50),
+        vacuum_advance_max=f(vac, "vacuum_advance_max", 42),
     )
     return VehicleProfile(
         name=veh.get("name", path.stem),
@@ -114,5 +116,6 @@ def describe_vehicle(v: VehicleProfile) -> str:
         f"redline {s.redline_rpm:.0f}\n"
         f"  idle {s.idle_rpm:.0f} ±{half:.0f} (pocket width {s.idle_pocket_width:.0f}) | "
         f"base {s.base_timing:.0f}° → peak mech {s.mech_timing_at_peak_torque:.0f}° | "
+        f"vac +{s.vacuum_advance:.0f}° @≤{s.vacuum_full_map_kpa:.0f} kPa | "
         f"boost {boost_note}"
     )
