@@ -8,17 +8,22 @@ RPM columns: low anchors always include the idle **pocket**
 Profile / user landmarks stay exact. Generated filler RPMs snap to
 increments of 50.
 
-Load axis is capped at max boost (never pads past it).
+Load axis: landmarks through max boost, plus **one overboost** point at
+the next round number above max MAP (same idea as overspeed past redline).
+Never pads further past that overboost ceiling.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from .model import EngineSpec
 
 RPM_FILL_STEP = 50
 KPA_PER_PSI = 6.895
+LOAD_OVERBOOST_STEP_KPA = 10
+LOAD_OVERBOOST_STEP_INHG = 5
 
 
 @dataclass(frozen=True)
@@ -35,6 +40,15 @@ def _as_int(v: float) -> float:
 def _snap_rpm(v: float, *, step: int = RPM_FILL_STEP) -> float:
     """Round to nearest step (default 50 RPM)."""
     return float(int(round(v / step) * step))
+
+
+def _next_round_above(value: float, step: float) -> float:
+    """Smallest multiple of `step` strictly above `value` (overboost headroom)."""
+    v = float(value)
+    n = math.ceil(v / step) * step
+    if n <= v + 1e-9:
+        n += step
+    return float(int(round(n)))
 
 
 def _unique_sorted(values: list[float], *, min_gap: float = 1.0) -> list[float]:
@@ -264,9 +278,20 @@ def _max_load_inhg(spec: EngineSpec) -> float:
     return 10.0
 
 
+def _overboost_kpa(spec: EngineSpec) -> float:
+    """One headroom MAP past vehicle max — next round ×10 (like overspeed)."""
+    return _next_round_above(_max_load_kpa(spec), LOAD_OVERBOOST_STEP_KPA)
+
+
+def _overboost_inhg(spec: EngineSpec) -> float:
+    """One headroom boost past vehicle max — next round ×5 inHg."""
+    return _next_round_above(_max_load_inhg(spec), LOAD_OVERBOOST_STEP_INHG)
+
+
 def load_landmarks_kpa(spec: EngineSpec) -> list[Landmark]:
     atm = spec.atm_kpa
     max_boost_kpa = _max_load_kpa(spec)
+    overboost = _overboost_kpa(spec)
     idle_map = 45.0
     return [
         Landmark(20, 100, "deep_vacuum"),
@@ -279,11 +304,13 @@ def load_landmarks_kpa(spec: EngineSpec) -> list[Landmark]:
         Landmark(atm, 100, "atmosphere"),
         Landmark(min(atm + 20, max_boost_kpa), 70, "light_boost"),
         Landmark(max_boost_kpa, 100, "max_boost"),
+        Landmark(overboost, 95, "overboost"),
     ]
 
 
 def load_landmarks_inhg(spec: EngineSpec) -> list[Landmark]:
     max_boost = _max_load_inhg(spec)
+    overboost = _overboost_inhg(spec)
     return [
         Landmark(-90.0, 80, "deep_vacuum"),
         Landmark(-55.0, 60, "high_vacuum"),
@@ -296,6 +323,7 @@ def load_landmarks_inhg(spec: EngineSpec) -> list[Landmark]:
         Landmark(min(13.5, max_boost), 60, "light_boost"),
         Landmark(max_boost, 100, "max_boost"),
         Landmark(max_boost * 0.5, 50, "mid_boost"),
+        Landmark(overboost, 95, "overboost"),
     ]
 
 
@@ -392,12 +420,12 @@ def select_axis(
 def generate_load_axis(spec: EngineSpec, count: int, *, unit: str = "kPa") -> list[float]:
     if unit.lower() in {"inhg", "inhg_gauge"}:
         floor = -90.0
-        ceiling = _max_load_inhg(spec)
+        ceiling = _overboost_inhg(spec)
         return select_axis(
             load_landmarks_inhg(spec), count, floor=floor, ceiling=ceiling
         )
     floor = 20.0
-    ceiling = _max_load_kpa(spec)
+    ceiling = _overboost_kpa(spec)
     return select_axis(load_landmarks_kpa(spec), count, floor=floor, ceiling=ceiling)
 
 
