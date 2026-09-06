@@ -90,9 +90,17 @@ def load_vehicle(path: Path) -> VehicleProfile:
         idle_pocket_width=f(eng, "idle_pocket_width", 250),
         base_timing=f(mech, "base_timing", 10),
         mech_timing_at_peak_torque=f(mech, "mech_timing_at_peak_torque", 32),
-        vacuum_advance=f(vac, "vacuum_advance", 10),
-        vacuum_full_map_kpa=f(vac, "vacuum_full_map_kpa", 50),
-        vacuum_advance_max=f(vac, "vacuum_advance_max", 42),
+        vacuum_total_timing=(
+            f(vac, "vacuum_total_timing", 50)
+            if "vacuum_total_timing" in vac
+            else (
+                f(mech, "mech_timing_at_peak_torque", 32) + f(vac, "vacuum_advance", 18)
+                if "vacuum_advance" in vac
+                else 50.0
+            )
+        ),
+        vacuum_full_map_kpa=40.0,
+        vacuum_advance_max=f(vac, "vacuum_total_timing", 50),
     )
     return VehicleProfile(
         name=veh.get("name", path.stem),
@@ -116,6 +124,6 @@ def describe_vehicle(v: VehicleProfile) -> str:
         f"redline {s.redline_rpm:.0f}\n"
         f"  idle {s.idle_rpm:.0f} ±{half:.0f} (pocket width {s.idle_pocket_width:.0f}) | "
         f"base {s.base_timing:.0f}° → peak mech {s.mech_timing_at_peak_torque:.0f}° | "
-        f"vac +{s.vacuum_advance:.0f}° @≤{s.vacuum_full_map_kpa:.0f} kPa | "
+        f"vac total {s.vacuum_total_timing:.0f}° | "
         f"boost {boost_note}"
     )
