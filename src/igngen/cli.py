@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .axes import generate_load_axis, generate_rpm_axis
+from .axes import describe_rpm_axis, generate_load_axis, generate_rpm_axis
 from .generate import generate_baseline
 from .io_files import load_table, save_table
 from .model import (
@@ -234,6 +234,8 @@ def main(argv: list[str] | None = None) -> int:
                 load_n = ini.load_count or len(preset.load)
                 rpm = generate_rpm_axis(spec, rpm_n)
                 load = generate_load_axis(spec, load_n, unit=load_unit)
+                print(describe_rpm_axis(spec, rpm))
+                print(f"  RPM:  {[int(x) for x in rpm]}")
             else:
                 if args.size:
                     a, b = args.size.lower().replace(" ", "").split("x", 1)
@@ -245,8 +247,9 @@ def main(argv: list[str] | None = None) -> int:
                 rpm = generate_rpm_axis(spec, cols)
                 load = generate_load_axis(spec, rows, unit=load_unit)
                 print(f"Generated axes: {cols} RPM × {rows} load ({load_unit})")
-                print(f"  RPM:  {rpm}")
-                print(f"  Load: {load}")
+                print(describe_rpm_axis(spec, rpm))
+                print(f"  RPM:  {[int(x) for x in rpm]}")
+                print(f"  Load: {[int(x) for x in load]}")
 
             out_path = args.out
             if not out_path:
