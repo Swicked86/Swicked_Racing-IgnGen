@@ -97,7 +97,7 @@ def prompt_engine_spec(
     idle_map_hi = float(getattr(d, "idle_map_hi", 45))
     boost_retard_per_psi = float(d.boost_retard_per_psi)
 
-    if layers in {"vacuum", "boost", "full"}:
+    if layers in {"vacuum", "boost", "idle", "full"}:
         print("\n— Vacuum —")
         vacuum_total_timing = float(
             _ask(
@@ -107,7 +107,7 @@ def prompt_engine_spec(
             )
         )
 
-    if layers in {"boost", "full"}:
+    if layers in {"boost", "idle", "full"}:
         print("\n— Boost —")
         boost_timing_limit = float(
             _ask(
