@@ -25,7 +25,7 @@ class EngineSpec:
     peak_torque_lbft: float = 189.0
     peak_torque_rpm: float = 4800.0
     redline_rpm: float = 9300.0
-    boost_psi: float = 7.0
+    boost_psi: float = 0.0
     # Mechanical curve (configurable)
     base_timing: float = 10.0
     mech_timing_at_peak_torque: float = 32.0
