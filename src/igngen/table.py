@@ -68,7 +68,7 @@ class TimingTable:
     ) -> str:
         """Render a terminal heatmap.
 
-        ``default`` (alias ``swicked``): bottom-left origin — high load at top,
+        ``default``: bottom-left origin — high load at top,
         low load at bottom, RPM labels on the bottom row, RPM → right.
         ``alpha``: RPM ↓ rows, Load → columns — top-left origin.
         """
@@ -102,10 +102,6 @@ class TimingTable:
             lines.append("  ".join(padded))
         lines.append("RPM ↓")
         return "\n".join(lines)
-
-    def _format_swicked(self, *, precision: int, color: bool) -> str:
-        """Deprecated alias for ``_format_default``."""
-        return self._format_default(precision=precision, color=color)
 
     def _format_default(self, *, precision: int, color: bool) -> str:
         # High load at top, low load at bottom; RPM axis along the bottom
