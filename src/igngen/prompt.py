@@ -92,6 +92,9 @@ def prompt_engine_spec(
     vacuum_total_timing = float(d.vacuum_total_timing)
     vacuum_full_map_kpa = float(d.vacuum_full_map_kpa)  # fixed 40 kPa; not prompted
     boost_timing_limit = float(getattr(d, "boost_timing_limit", d.boost_retard_max))
+    idle_pocket_bump = float(getattr(d, "idle_pocket_bump", 2))
+    idle_map_lo = float(getattr(d, "idle_map_lo", 30))
+    idle_map_hi = float(getattr(d, "idle_map_hi", 45))
     boost_retard_per_psi = float(d.boost_retard_per_psi)
 
     if layers in {"vacuum", "boost", "full"}:
@@ -114,6 +117,16 @@ def prompt_engine_spec(
             )
         )
 
+    if layers in {"idle", "full"}:
+        print("\n— Idle pocket —")
+        idle_pocket_bump = float(
+            _ask(
+                "Idle stabilization (°)",
+                _num_default(idle_pocket_bump, as_int=True),
+                cast=int,
+            )
+        )
+
     print()
     return EngineSpec(
         displacement_cc=float(displacement_cc),
@@ -127,6 +140,9 @@ def prompt_engine_spec(
         mech_timing_at_peak_torque=float(mech_at_tq),
         idle_rpm=float(idle_rpm),
         idle_pocket_width=float(idle_pocket_width),
+        idle_map_lo=float(idle_map_lo),
+        idle_map_hi=float(idle_map_hi),
+        idle_pocket_bump=float(idle_pocket_bump),
         vacuum_total_timing=float(vacuum_total_timing),
         vacuum_full_map_kpa=float(vacuum_full_map_kpa),
         vacuum_advance_max=float(vacuum_total_timing),
