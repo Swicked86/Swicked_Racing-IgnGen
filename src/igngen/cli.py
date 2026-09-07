@@ -23,8 +23,8 @@ from .prompt import prompt_engine_spec, prompt_output_path, prompt_preset
 from .table import parse_range
 from .engines import describe_engine, find_engine, list_engines
 
-_LAYOUTS = ("swicked", "alpha")
-_EXPORTS = ("swicked", "alpha")
+_LAYOUTS = ("default", "alpha", "swicked")  # swicked = alias for default
+_EXPORTS = ("default", "alpha", "swicked")  # swicked = alias for default
 _DEFAULT_PRESET = "base"
 _DEFAULT_LAYERS = "idle"
 
@@ -151,26 +151,26 @@ def main(argv: list[str] | None = None) -> int:
     p_show = sub.add_parser("show", help="Print a timing table heatmap")
     p_show.add_argument("path")
     p_show.add_argument("--precision", type=int, default=0)
-    p_show.add_argument("--layout", choices=_LAYOUTS, default="swicked")
+    p_show.add_argument("--layout", choices=_LAYOUTS, default="default")
     p_show.add_argument("--no-color", action="store_true")
 
     p_bump = sub.add_parser("bump", help="Add/subtract whole degrees everywhere")
     p_bump.add_argument("path")
     p_bump.add_argument("--by", type=int, required=True)
     p_bump.add_argument("--out", "-o", required=True)
-    p_bump.add_argument("--export", choices=_EXPORTS, default="swicked")
+    p_bump.add_argument("--export", choices=_EXPORTS, default="default")
 
     p_clamp = sub.add_parser("clamp", help="Clamp all cells to min/max")
     p_clamp.add_argument("path")
     p_clamp.add_argument("--min", dest="minimum", type=int, required=True)
     p_clamp.add_argument("--max", dest="maximum", type=int, required=True)
     p_clamp.add_argument("--out", "-o", required=True)
-    p_clamp.add_argument("--export", choices=_EXPORTS, default="swicked")
+    p_clamp.add_argument("--export", choices=_EXPORTS, default="default")
 
     p_conv = sub.add_parser("convert", help="Convert CSV ↔ JSON")
     p_conv.add_argument("path")
     p_conv.add_argument("--out", "-o", required=True)
-    p_conv.add_argument("--export", choices=_EXPORTS, default="swicked")
+    p_conv.add_argument("--export", choices=_EXPORTS, default="default")
 
     sub.add_parser("presets", help="List axis presets")
     sub.add_parser("engines", help="List engine profiles")
@@ -253,9 +253,14 @@ def main(argv: list[str] | None = None) -> int:
                 export = args.export or preset.default_export
                 load_unit = preset.load_unit
             else:
-                layout = args.layout or "swicked"
-                export = args.export or "swicked"
+                layout = args.layout or "default"
+                export = args.export or "default"
                 load_unit = "kPa"
+
+            if layout == "swicked":
+                layout = "default"
+            if export == "swicked":
+                export = "default"
 
             if args.model == "research":
                 if interactive and sys.stdin.isatty():
