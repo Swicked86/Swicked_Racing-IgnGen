@@ -40,13 +40,14 @@ def prompt_engine_spec(
     layers: LayerName = "mechanical",
     defaults: EngineSpec | None = None,
 ) -> EngineSpec:
-    """Prompt for engine inputs. ``defaults`` (e.g. vehicle profile) fill the [brackets]."""
+    """Prompt for engine inputs. ``defaults`` (e.g. engine profile) fill the [brackets]."""
     d = defaults or EngineSpec()
     title = "IgnGen — engine inputs (Enter keeps the default)"
     if defaults is not None:
-        title += " — from vehicle profile"
+        title += " — from engine profile"
     print(f"{title}\n")
 
+    print("— Engine settings —")
     displacement_cc = _ask(
         "Displacement (cc)", _num_default(d.displacement_cc, as_int=True), cast=int
     )
@@ -63,19 +64,29 @@ def prompt_engine_spec(
     redline_rpm = _ask(
         "Redline / max RPM", _num_default(d.redline_rpm, as_int=True), cast=int
     )
-    boost_psi = _ask(
-        "Max boost (psi, 0 = NA)", _num_default(d.boost_psi), cast=float
-    )
+
+    print("\n— Idle settings —")
     idle_rpm = _ask(
         "Target idle RPM", _num_default(d.idle_rpm, as_int=True), cast=int
     )
     idle_pocket_width = float(
         _ask(
-            "Idle pocket width (±RPM from idle)",
+            "Idle pocket ±RPM",
             _num_default(d.idle_pocket_width, as_int=True),
             cast=int,
         )
     )
+    idle_pocket_bump = float(getattr(d, "idle_pocket_bump", 2))
+    idle_map_lo = float(getattr(d, "idle_map_lo", 30))
+    idle_map_hi = float(getattr(d, "idle_map_hi", 45))
+    if layers in {"idle", "full"}:
+        idle_pocket_bump = float(
+            _ask(
+                "Idle stabilization ±°",
+                _num_default(idle_pocket_bump, as_int=True),
+                cast=int,
+            )
+        )
 
     print("\n— Mechanical advance —")
     base_timing = _ask(
@@ -92,37 +103,29 @@ def prompt_engine_spec(
     vacuum_total_timing = float(d.vacuum_total_timing)
     vacuum_full_map_kpa = float(d.vacuum_full_map_kpa)  # fixed 40 kPa; not prompted
     boost_timing_limit = float(getattr(d, "boost_timing_limit", d.boost_retard_max))
-    idle_pocket_bump = float(getattr(d, "idle_pocket_bump", 2))
-    idle_map_lo = float(getattr(d, "idle_map_lo", 30))
-    idle_map_hi = float(getattr(d, "idle_map_hi", 45))
     boost_retard_per_psi = float(d.boost_retard_per_psi)
+    boost_psi = float(d.boost_psi)
 
     if layers in {"vacuum", "boost", "idle", "full"}:
         print("\n— Vacuum —")
         vacuum_total_timing = float(
             _ask(
-                "Total timing",
+                "Total timing advance limit",
                 _num_default(d.vacuum_total_timing, as_int=True),
                 cast=int,
             )
         )
 
+    # Max boost always asked (shapes load axis); retard limit with boost layers
+    print("\n— Boost —")
+    boost_psi = _ask(
+        "Max boost (psi, 0 = NA)", _num_default(d.boost_psi), cast=float
+    )
     if layers in {"boost", "idle", "full"}:
-        print("\n— Boost —")
         boost_timing_limit = float(
             _ask(
-                "Boost timing limit",
+                "Boost timing retard limit",
                 _num_default(boost_timing_limit, as_int=True),
-                cast=int,
-            )
-        )
-
-    if layers in {"idle", "full"}:
-        print("\n— Idle pocket (±) —")
-        idle_pocket_bump = float(
-            _ask(
-                "Idle stabilization (±° at pocket RPM edges)",
-                _num_default(idle_pocket_bump, as_int=True),
                 cast=int,
             )
         )
