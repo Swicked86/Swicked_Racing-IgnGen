@@ -89,6 +89,14 @@ def prompt_engine_spec(
         )
 
     print("\n— Mechanical advance —")
+    cranking_rpm = float(getattr(d, "cranking_rpm", 500))
+    cranking_timing = float(
+        _ask(
+            "Cranking timing (°BTDC @ 500 RPM)",
+            _num_default(getattr(d, "cranking_timing", 10), as_int=True),
+            cast=int,
+        )
+    )
     base_timing = _ask(
         "Base / initial timing (°BTDC)",
         _num_default(d.base_timing, as_int=True),
@@ -141,6 +149,8 @@ def prompt_engine_spec(
         redline_rpm=float(redline_rpm),
         boost_psi=float(boost_psi),
         base_timing=float(base_timing),
+        cranking_rpm=float(cranking_rpm),
+        cranking_timing=float(cranking_timing),
         mech_timing_at_peak_torque=float(mech_at_tq),
         idle_rpm=float(idle_rpm),
         idle_pocket_width=float(idle_pocket_width),
