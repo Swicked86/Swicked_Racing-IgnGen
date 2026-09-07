@@ -97,9 +97,9 @@ def main(argv: list[str] | None = None) -> int:
         help=f"Preset name (default: {_DEFAULT_PRESET}), or 'none' to choose table size",
     )
     p_new.add_argument(
-        "--vehicle",
+        "--engine",
         default=None,
-        help="Vehicle profile (e.g. D16Z6) — pre-fills prompt defaults (editable)",
+        help="Engine profile (e.g. D16Z6) — pre-fills prompt defaults (editable)",
     )
     p_new.add_argument(
         "--layers",
@@ -173,7 +173,8 @@ def main(argv: list[str] | None = None) -> int:
     p_conv.add_argument("--export", choices=_EXPORTS, default="swicked")
 
     sub.add_parser("presets", help="List axis presets")
-    sub.add_parser("vehicles", help="List vehicle profiles")
+    sub.add_parser("engines", help="List engine profiles")
+    sub.add_parser("vehicles", help="Alias for engines")
 
     args = parser.parse_args(argv)
 
@@ -193,10 +194,10 @@ def main(argv: list[str] | None = None) -> int:
                 )
             return 0
 
-        if args.command == "vehicles":
+        if args.command in {"engines", "vehicles"}:
             paths = list_vehicles()
             if not paths:
-                print("No vehicle profiles found under vehicles/")
+                print("No engine profiles found under vehicles/")
                 return 0
             for path in paths:
                 v = find_vehicle(path.stem)
@@ -210,12 +211,12 @@ def main(argv: list[str] | None = None) -> int:
             interactive = not args.no_prompt and args.model == "research"
             layers = args.layers
             vehicle = None
-            if getattr(args, "vehicle", None):
-                vehicle = find_vehicle(args.vehicle)
+            if getattr(args, "engine", None):
+                vehicle = find_vehicle(args.engine)
                 if vehicle is None:
                     known = ", ".join(p.stem for p in list_vehicles()) or "(none)"
                     raise ValueError(
-                        f"unknown vehicle {args.vehicle!r}; known: {known}"
+                        f"unknown engine {args.engine!r}; known: {known}"
                     )
                 print(describe_vehicle(vehicle))
                 print()
@@ -258,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
 
             if args.model == "research":
                 if interactive and sys.stdin.isatty():
-                    # Vehicle (if any) pre-fills [defaults]; Enter keeps, type to override
+                    # Engine profile (if any) pre-fills [defaults]; Enter keeps, type to override
                     spec = prompt_engine_spec(
                         layers=layers,
                         defaults=vehicle.spec if vehicle is not None else None,
@@ -375,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
                     "(load axis is unused for timing in this layer — "
                     "every load row matches the RPM curve)"
                 )
-            veh_note = f", vehicle={vehicle.name}" if vehicle else ""
+            veh_note = f", engine={vehicle.name}" if vehicle else ""
             print(
                 f"Wrote {out_path} ({table.shape[0]}×{table.shape[1]} {table.load_unit}, "
                 f"whole °, layers={layers}{veh_note}, origin={origin}, "
