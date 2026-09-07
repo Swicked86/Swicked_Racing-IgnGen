@@ -1,14 +1,20 @@
 from __future__ import annotations
 
 from .axes import generate_load_axis, generate_rpm_axis
-from .profiles import EngineParameters
+from .profiles import EngineParameters, load_engine_profile, save_engine_profile
 from .timing import mechanical_timing, timing_at
 
 
 def _example() -> EngineParameters:
     return EngineParameters(
         idle_rpm=750,
-        idle_pocket_width=250,
+        idle_pocket_width=100,
+        idle_pocket_lower_share=0.25,
+        idle_pocket_upper_share=0.75,
+        idle_timing_target=10,
+        idle_timing_delta=6,
+        idle_map_lo=30,
+        idle_map_hi=45,
         peak_torque_rpm=3500,
         peak_hp_rpm=0,
         redline_rpm=6000,
@@ -19,10 +25,18 @@ def _example() -> EngineParameters:
     )
 
 
+def test_idle_pocket_uses_total_width_and_25_75_split() -> None:
+    spec = _example()
+    assert spec.idle_pocket_lo_rpm == 725
+    assert spec.idle_rpm == 750
+    assert spec.idle_pocket_hi_rpm == 825
+    assert spec.derived_idle_targets() == (16.0, 10.0, 4.0)
+
+
 def test_rpm_axis_protects_structural_landmarks() -> None:
     spec = _example()
     axis = generate_rpm_axis(spec, 16)
-    for expected in (500, 750, 1000, 3500, 5500, 6000, 7000):
+    for expected in (500, 725, 750, 825, 3500, 5500, 6000, 7000):
         assert expected in axis
     assert len(axis) == 16
     assert axis == sorted(set(axis))
@@ -33,8 +47,6 @@ def test_rpm_discretionary_cells_are_pre_torque_dense() -> None:
     axis = generate_rpm_axis(spec, 20)
     pre = [x for x in axis if spec.idle_pocket_hi_rpm < x < spec.peak_torque_rpm]
     post = [x for x in axis if spec.peak_torque_rpm < x < spec.overspeed_rpm]
-    # Structural high-RPM anchors already consume cells; discretionary placement
-    # should still leave visibly greater resolution in the mechanical-climb region.
     assert len(pre) >= 5
     assert len(axis) == 20
     assert len(pre) >= len(post) - 2
@@ -49,6 +61,17 @@ def test_load_axis_always_contains_atmosphere() -> None:
             assert 100.0 in axis
             assert len(axis) == count
             assert axis == sorted(set(axis))
+
+
+def test_idle_map_changes_are_profile_inputs_and_axis_candidates() -> None:
+    stockish = _example()
+    cammed = stockish.with_overrides(idle_map_lo=50, idle_map_hi=65)
+    assert stockish.idle_map_lo == 30
+    assert cammed.idle_map_lo == 50
+    assert cammed.idle_map_hi == 65
+    axis = generate_load_axis(cammed, 12)
+    assert any(50 <= point <= 65 for point in axis)
+    assert 100.0 in axis
 
 
 def test_vacuum_is_full_at_40_kpa_only_after_mechanical_progress() -> None:
@@ -66,11 +89,31 @@ def test_vacuum_is_full_at_40_kpa_only_after_mechanical_progress() -> None:
 
 def test_idle_pocket_overrides_pressure_surface() -> None:
     spec = _example()
-    spec.base_timing = 15
-    spec.idle_timing_low = 20
-    spec.idle_timing_target = 15
-    spec.idle_timing_high = 5
+    assert timing_at(725, 35, spec, include_soft_limit=False) == 16
+    assert timing_at(750, 35, spec, include_soft_limit=False) == 10
+    assert timing_at(825, 35, spec, include_soft_limit=False) == 4
 
-    assert timing_at(500, 35, spec, include_soft_limit=False) == 20
-    assert timing_at(750, 35, spec, include_soft_limit=False) == 15
-    assert timing_at(1000, 35, spec, include_soft_limit=False) == 5
+
+def test_temporary_overrides_do_not_mutate_loaded_defaults() -> None:
+    base = _example()
+    edited = base.with_overrides(idle_map_lo=48, idle_map_hi=62, idle_timing_target=12)
+    assert base.idle_map_lo == 30
+    assert base.idle_timing_target == 10
+    assert edited.idle_map_lo == 48
+    assert edited.idle_map_hi == 62
+    assert edited.idle_timing_target == 12
+
+
+def test_save_and_reload_custom_engine(tmp_path) -> None:
+    spec = _example().with_overrides(name="Cammed B18", description="test profile", idle_map_lo=48, idle_map_hi=62)
+    path = tmp_path / "cammed_b18.ini"
+    save_engine_profile(spec, path)
+    loaded = load_engine_profile(path)
+    assert loaded.name == "Cammed B18"
+    assert loaded.idle_pocket_width == 100
+    assert loaded.idle_pocket_lower_share == 0.25
+    assert loaded.idle_pocket_upper_share == 0.75
+    assert loaded.idle_timing_target == 10
+    assert loaded.idle_timing_delta == 6
+    assert loaded.idle_map_lo == 48
+    assert loaded.idle_map_hi == 62
