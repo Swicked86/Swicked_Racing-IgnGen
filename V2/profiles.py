@@ -21,10 +21,14 @@ class EngineParameters:
     boost_psi: float = 0.0
 
     idle_rpm: float = 750.0
-    idle_pocket_width: float = 250.0
+    # Total RPM span of the idle pocket, not +/- RPM.
+    idle_pocket_width: float = 100.0
+    idle_pocket_lower_share: float = 0.25
+    idle_pocket_upper_share: float = 0.75
     idle_map_lo: float = 30.0
     idle_map_hi: float = 45.0
-    idle_pocket_bump: float = 2.0
+    # Default pocket authority around the idle timing target.
+    idle_pocket_bump: float = 6.0
 
     cranking_rpm: float = 500.0
     cranking_timing: float = 10.0
@@ -44,18 +48,33 @@ class EngineParameters:
     atm_kpa: float = 100.0
     map_floor_kpa: float = 20.0
 
-    # Optional explicit idle-pocket targets. None means derive from base +/- bump.
+    # Optional explicit idle-pocket targets.  If omitted, V2 defaults to
+    # 10 deg BTDC at target idle, +6 deg on the catch side, -6 deg on the
+    # upper/retard side.  Engine profiles may override any of these.
     idle_timing_low: float | None = None
     idle_timing_target: float | None = None
     idle_timing_high: float | None = None
 
+    def _idle_pocket_shares(self) -> tuple[float, float]:
+        lower = max(0.0, float(self.idle_pocket_lower_share))
+        upper = max(0.0, float(self.idle_pocket_upper_share))
+        total = lower + upper
+        if total <= 0.0:
+            return 0.25, 0.75
+        return lower / total, upper / total
+
     @property
     def idle_pocket_lo_rpm(self) -> float:
-        return max(self.cranking_rpm, self.idle_rpm - self.idle_pocket_width)
+        lower, _ = self._idle_pocket_shares()
+        return max(
+            self.cranking_rpm,
+            self.idle_rpm - self.idle_pocket_width * lower,
+        )
 
     @property
     def idle_pocket_hi_rpm(self) -> float:
-        return self.idle_rpm + self.idle_pocket_width
+        _, upper = self._idle_pocket_shares()
+        return self.idle_rpm + self.idle_pocket_width * upper
 
     @property
     def soft_limit_start_rpm(self) -> float:
@@ -70,15 +89,16 @@ class EngineParameters:
         return self.atm_kpa + max(0.0, self.boost_psi) * 6.895
 
     def derived_idle_targets(self) -> tuple[float, float, float]:
-        low = self.idle_timing_low
         target = self.idle_timing_target
+        if target is None:
+            target = 10.0
+
+        low = self.idle_timing_low
         high = self.idle_timing_high
         if low is None:
-            low = self.base_timing + self.idle_pocket_bump
-        if target is None:
-            target = self.base_timing
+            low = target + self.idle_pocket_bump
         if high is None:
-            high = self.base_timing - self.idle_pocket_bump
+            high = target - self.idle_pocket_bump
         return float(low), float(target), float(high)
 
 
@@ -172,6 +192,29 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
             return None
         return float(section.get(key))
 
+    # V2 prefers idle-pocket configuration in [idle].  Fall back to the
+    # legacy [engine] value so existing profiles remain readable.
+    pocket_width = number(
+        idle,
+        "idle_pocket_width",
+        number(engine, "idle_pocket_width", defaults.idle_pocket_width),
+    )
+    pocket_lower_share = number(
+        idle,
+        "idle_pocket_lower_share",
+        defaults.idle_pocket_lower_share,
+    )
+    pocket_upper_share = number(
+        idle,
+        "idle_pocket_upper_share",
+        defaults.idle_pocket_upper_share,
+    )
+    pocket_bump = number(
+        idle,
+        "idle_timing_delta",
+        number(idle, "idle_pocket_bump", defaults.idle_pocket_bump),
+    )
+
     return EngineParameters(
         name=str(profile.get("name", path.stem)),
         description=str(profile.get("description", path.stem)),
@@ -183,10 +226,12 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
         redline_rpm=number(engine, "redline_rpm", defaults.redline_rpm),
         boost_psi=boost_psi,
         idle_rpm=number(engine, "idle_rpm", defaults.idle_rpm),
-        idle_pocket_width=number(engine, "idle_pocket_width", defaults.idle_pocket_width),
+        idle_pocket_width=pocket_width,
+        idle_pocket_lower_share=pocket_lower_share,
+        idle_pocket_upper_share=pocket_upper_share,
         idle_map_lo=number(idle, "idle_map_lo", defaults.idle_map_lo),
         idle_map_hi=number(idle, "idle_map_hi", defaults.idle_map_hi),
-        idle_pocket_bump=number(idle, "idle_pocket_bump", defaults.idle_pocket_bump),
+        idle_pocket_bump=pocket_bump,
         cranking_rpm=number(mechanical, "cranking_rpm", defaults.cranking_rpm),
         cranking_timing=number(mechanical, "cranking_timing", defaults.cranking_timing),
         base_timing=number(mechanical, "base_timing", defaults.base_timing),
