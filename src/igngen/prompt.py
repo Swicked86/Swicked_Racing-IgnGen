@@ -71,7 +71,7 @@ def prompt_engine_spec(
     )
     idle_pocket_width = float(
         _ask(
-            "Idle pocket (±RPM from idle)",
+            "Idle pocket width (±RPM from idle)",
             _num_default(d.idle_pocket_width, as_int=True),
             cast=int,
         )
@@ -118,7 +118,7 @@ def prompt_engine_spec(
         )
 
     if layers in {"idle", "full"}:
-        print("\n— Idle pocket —")
+        print("\n— Idle pocket (±) —")
         idle_pocket_bump = float(
             _ask(
                 "Idle stabilization (±° at pocket RPM edges)",
