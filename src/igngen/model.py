@@ -314,30 +314,35 @@ def pressure_correction(map_kpa: float, spec: EngineSpec) -> float:
 def idle_pocket_correction(rpm: float, map_kpa: float, spec: EngineSpec) -> float:
     """Localized idle basin: RPM pocket × idle MAP band.
 
-    Typical idle vacuum ~30–45 kPa abs. Bottom of band +bump°, top −bump°
-    (default ±2°). Outside the RPM pocket or MAP band → 0.
+    At idle vacuum (default 30–45 kPa): stabilization vs RPM —
+    pocket lower edge +bump°, idle 0°, pocket upper edge −bump°
+    (e.g. 620→+2, 670→0, 720→−2 with bump=2). Outside RPM/MAP → 0.
     """
     half = max(float(spec.idle_pocket_width) / 2.0, 0.0)
-    if half <= 0 or abs(rpm - spec.idle_rpm) > half:
+    if half <= 0:
+        return 0.0
+    idle = float(spec.idle_rpm)
+    if abs(rpm - idle) > half:
         return 0.0
     lo = float(spec.idle_map_lo)
     hi = float(spec.idle_map_hi)
-    if hi <= lo:
-        return 0.0
-    if map_kpa < lo or map_kpa > hi:
+    if hi < lo or map_kpa < lo or map_kpa > hi:
         return 0.0
     bump = float(getattr(spec, "idle_pocket_bump", 2.0))
-    t = (map_kpa - lo) / (hi - lo)  # 0 at bottom, 1 at top
-    return bump * (1.0 - t) + (-bump) * t
+    # −1 at pocket_lo, 0 at idle, +1 at pocket_hi
+    t = (rpm - idle) / half
+    return -bump * t
 
 
 def describe_idle_pocket(spec: EngineSpec) -> str:
     half = spec.idle_pocket_width / 2.0
     bump = float(getattr(spec, "idle_pocket_bump", 2.0))
+    lo_rpm = spec.idle_rpm - half
+    hi_rpm = spec.idle_rpm + half
     return (
-        f"Idle pocket: {spec.idle_rpm:.0f} ±{half:.0f} RPM × "
-        f"{spec.idle_map_lo:.0f}–{spec.idle_map_hi:.0f} kPa; "
-        f"+{bump:.0f}° at {spec.idle_map_lo:.0f} kPa → −{bump:.0f}° at {spec.idle_map_hi:.0f} kPa"
+        f"Idle pocket: {lo_rpm:.0f}/{spec.idle_rpm:.0f}/{hi_rpm:.0f} RPM "
+        f"@ {spec.idle_map_lo:.0f}–{spec.idle_map_hi:.0f} kPa; "
+        f"+{bump:.0f}° / 0° / −{bump:.0f}° (stabilization)"
     )
 
 
