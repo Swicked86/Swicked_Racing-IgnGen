@@ -63,6 +63,33 @@ def test_load_axis_always_contains_atmosphere() -> None:
             assert axis == sorted(set(axis))
 
 
+def test_load_axis_uses_only_one_row_below_idle_region() -> None:
+    spec = _example()
+    for count in (8, 12, 16, 20):
+        axis = generate_load_axis(spec, count)
+        below_idle = [point for point in axis if point < spec.idle_map_lo]
+        assert len(below_idle) == 1
+        assert below_idle[0] < spec.idle_map_lo
+        assert spec.idle_map_lo in axis
+        assert spec.idle_map_hi in axis
+        assert 100.0 in axis
+
+
+def test_cammed_idle_map_moves_low_end_of_axis_upward() -> None:
+    stockish = _example()
+    cammed = stockish.with_overrides(idle_map_lo=50, idle_map_hi=65)
+
+    stock_axis = generate_load_axis(stockish, 16)
+    cammed_axis = generate_load_axis(cammed, 16)
+
+    assert len([point for point in stock_axis if point < 30]) == 1
+    assert len([point for point in cammed_axis if point < 50]) == 1
+    assert min(cammed_axis) > min(stock_axis)
+    assert 50.0 in cammed_axis
+    assert 65.0 in cammed_axis
+    assert 100.0 in cammed_axis
+
+
 def test_idle_map_changes_are_profile_inputs_and_axis_candidates() -> None:
     stockish = _example()
     cammed = stockish.with_overrides(idle_map_lo=50, idle_map_hi=65)
