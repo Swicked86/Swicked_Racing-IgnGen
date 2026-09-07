@@ -61,3 +61,33 @@ def test_idle_pocket_width_affects_timing_full_layers():
     t_wide = timing_at(1300, 45, wide, layers="full")
     t_narrow = timing_at(1300, 45, narrow, layers="full")
     assert t_wide != t_narrow
+
+
+def test_inhg_idle_pocket_band_columns():
+    """Alpha/inHg axis must keep ≥2 load columns inside idle MAP band for ±° pocket."""
+    from igngen.axes import generate_load_axis
+    from igngen.model import EngineSpec, timing_at
+    from igngen.units import inhg_gauge_to_kpa_abs
+
+    spec = EngineSpec(
+        base_timing=16,
+        mech_timing_at_peak_torque=34,
+        idle_rpm=900,
+        idle_pocket_width=50,
+        idle_pocket_bump=2,
+        idle_map_lo=30,
+        idle_map_hi=45,
+        peak_torque_rpm=5200,
+        redline_rpm=7200,
+        boost_psi=0.0,
+        cranking_rpm=500,
+        cranking_timing=10,
+        vacuum_total_timing=50,
+    )
+    load = generate_load_axis(spec, 16, unit="inHg")
+    band = [x for x in load if 30 <= inhg_gauge_to_kpa_abs(x) <= 45]
+    assert len(band) >= 2, band
+    kpa = inhg_gauge_to_kpa_abs(band[0])
+    assert timing_at(850, kpa, spec, layers="idle") == 18
+    assert timing_at(900, kpa, spec, layers="idle") == 16
+    assert timing_at(950, kpa, spec, layers="idle") == 14
