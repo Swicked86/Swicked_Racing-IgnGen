@@ -121,7 +121,12 @@ def vacuum_high_at_rpm(rpm: float, spec: EngineSpec) -> float:
 
 
 def boost_retard_full(spec: EngineSpec) -> float:
-    """Max boost retard (°): full mechanical minus boost timing limit."""
+    """Max boost retard (°): full mechanical minus boost timing limit.
+
+    NA (``boost_psi == 0``): ignored — no retard.
+    """
+    if float(spec.boost_psi) <= 0.0:
+        return 0.0
     limit = float(getattr(spec, "boost_timing_limit", spec.boost_retard_max))
     return max(0.0, float(spec.mech_timing_at_peak_torque) - limit)
 
@@ -232,14 +237,16 @@ def pressure_row_timings(
     """
     mech = int(round(mechanical_advance(rpm, spec)))
     high = int(round(vacuum_high_at_rpm(rpm, spec)))
-    low = int(round(boost_low_at_rpm(rpm, spec))) if include_boost else mech
+    # boost_psi == 0 → NA: ignore boost retard entirely (atm + tip stay on master curve)
+    use_boost = bool(include_boost) and float(spec.boost_psi) > 0.0
+    low = int(round(boost_low_at_rpm(rpm, spec))) if use_boost else mech
     full_at = float(spec.vacuum_full_map_kpa)
     atm = float(spec.atm_kpa)
     boost_full = max_boost_map_kpa(spec)
 
     vac_full_idxs = [i for i, x in enumerate(loads_kpa) if x <= full_at]
     vac_mid_idxs = [i for i, x in enumerate(loads_kpa) if full_at < x < atm]
-    if include_boost:
+    if use_boost:
         atm_idxs = [i for i, x in enumerate(loads_kpa) if abs(x - atm) < 0.51]
         boost_mid_idxs = [i for i, x in enumerate(loads_kpa) if atm < x < boost_full]
         boost_full_idxs = [i for i, x in enumerate(loads_kpa) if x >= boost_full]
@@ -256,7 +263,7 @@ def pressure_row_timings(
         out[idx] = vac_mids[i]
     for i in atm_idxs:
         out[i] = mech
-    if include_boost:
+    if use_boost:
         boost_mids = _whole_degree_taper(mech, low, len(boost_mid_idxs))
         for i, idx in enumerate(boost_mid_idxs):
             out[idx] = boost_mids[i]
@@ -374,9 +381,9 @@ def timing_at(
         return int(round(max(0.0, mech)))
 
     if layers in {"vacuum", "boost"}:
-        include_boost = layers == "boost"
+        use_boost = layers == "boost" and float(spec.boost_psi) > 0.0
         high = vacuum_high_at_rpm(rpm, spec)
-        low = boost_low_at_rpm(rpm, spec) if include_boost else mech
+        low = boost_low_at_rpm(rpm, spec) if use_boost else mech
         full_at = float(spec.vacuum_full_map_kpa)
         atm = float(spec.atm_kpa)
         boost_full = max_boost_map_kpa(spec)
@@ -385,7 +392,7 @@ def timing_at(
         elif map_kpa < atm:
             t = (map_kpa - full_at) / max(atm - full_at, 1.0)
             value = high + (mech - high) * t
-        elif map_kpa <= atm or not include_boost:
+        elif map_kpa <= atm or not use_boost:
             value = mech
         elif map_kpa >= boost_full:
             value = low
