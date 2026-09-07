@@ -81,7 +81,7 @@ BASE = AxisPreset(
     name="base",
     description=(
         "Base Swicked grid: 16×12 MAP(kPa)×RPM-style axes with atmosphere at 100. "
-        "Map origin is bottom-left (RPM right, load up)."
+        "Map origin is top-left (RPM down, load right) — ALPHAlink-style view."
     ),
     rpm=(
         400,
@@ -116,9 +116,9 @@ BASE = AxisPreset(
         140,
     ),
     load_unit="kPa",
-    origin="bottom_left",
-    default_layout="swicked",
-    default_export="swicked",
+    origin="top_left",
+    default_layout="alpha",
+    default_export="alpha",
 )
 
 PRESETS: dict[str, AxisPreset] = {
