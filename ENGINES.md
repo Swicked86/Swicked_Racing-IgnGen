@@ -21,6 +21,6 @@ Factory SAE peaks for USDM OBD1-era (~1992–1995). Timing/vacuum/boost defaults
 | H23A1 | Prelude Si | 2259 | 160 @ 5800 | 156 @ 5300 | 6500 |
 
 Notes:
-- New profiles are **stock NA** (`boost_psi = 0`). D16Z6 keeps its existing mild-boost starter values.
+- All profiles default to **stock NA** (`boost_psi = 0`). Set boost at the prompt if forced induction.
 - Idle defaults **750 ± 50 RPM**; base timing **16°**; edit freely at the prompts.
 - Peak mechanical timing is an IgnGen curve starter (32–36°), not a copied OEM distributor table.
