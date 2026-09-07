@@ -101,6 +101,8 @@ def load_engine(path: Path) -> EngineProfile:
         idle_map_hi=f(idle, "idle_map_hi", 45),
         idle_pocket_bump=f(idle, "idle_pocket_bump", 2),
         base_timing=f(mech, "base_timing", 10),
+        cranking_rpm=f(mech, "cranking_rpm", 500),
+        cranking_timing=f(mech, "cranking_timing", 10),
         mech_timing_at_peak_torque=f(mech, "mech_timing_at_peak_torque", 32),
         vacuum_total_timing=(
             f(vac, "vacuum_total_timing", 50)
