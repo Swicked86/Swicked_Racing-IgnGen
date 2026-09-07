@@ -35,6 +35,7 @@ def test_d16z6_rpm_axis_hits_idle_pocket_and_peaks():
     v = load_engine(repo / "engines" / "d16z6.ini")
     axis = generate_rpm_axis(v.spec, 16)
     assert len(axis) == 16
+    assert any(abs(x - 500) < 1 for x in axis)  # cranking
     assert any(abs(x - 620) < 1 for x in axis)
     assert any(abs(x - 670) < 1 for x in axis)
     assert any(abs(x - 720) < 1 for x in axis)
@@ -49,7 +50,7 @@ def test_d16z6_fillers_are_multiples_of_50():
     s = v.spec
     axis = generate_rpm_axis(s, 16)
     specified = {
-        300.0,
+        float(s.cranking_rpm),
         float(s.idle_rpm - s.idle_pocket_width),
         float(s.idle_rpm),
         float(s.idle_rpm + s.idle_pocket_width),
