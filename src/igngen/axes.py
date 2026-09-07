@@ -373,43 +373,16 @@ def load_landmarks_kpa(spec: EngineSpec) -> list[Landmark]:
 
 
 
-def _inhg_in_idle_band(kpa_target: float, spec: EngineSpec) -> float:
-    """Pick an integer inHg label whose kPa conversion stays inside idle MAP band."""
-    atm = float(spec.atm_kpa)
-    lo = float(spec.idle_map_lo)
-    hi = float(spec.idle_map_hi)
-    raw = kpa_abs_to_inhg_gauge(kpa_target, atm)
-    candidates: list[float] = []
-    base = int(round(raw))
-    for adj in range(0, 8):
-        for cand in (base - adj, base + adj) if adj else (base,):
-            k = inhg_gauge_to_kpa_abs(float(cand), atm)
-            if lo - 1e-9 <= k <= hi + 1e-9:
-                candidates.append(float(cand))
-        if candidates:
-            # Prefer closest to target kPa
-            return min(candidates, key=lambda c: abs(inhg_gauge_to_kpa_abs(c, atm) - kpa_target))
-    return float(base)
-
 
 def load_landmarks_inhg(spec: EngineSpec) -> list[Landmark]:
-    """inHg gauge landmarks; include idle MAP band so idle-pocket ±° is visible."""
+    """Legacy inHg landmarks — prefer generate_load_axis (kPa→inHg)."""
     max_boost = _max_load_inhg(spec)
     overboost = _overboost_inhg(spec)
-    lo_k = float(spec.idle_map_lo)
-    hi_k = float(spec.idle_map_hi)
-    mid_k = 0.5 * (lo_k + hi_k)
-    idle_lo = _inhg_in_idle_band(lo_k, spec)
-    idle_mid = _inhg_in_idle_band(mid_k, spec)
-    idle_hi = _inhg_in_idle_band(hi_k, spec)
     marks = [
         Landmark(-90.0, 80, "deep_vacuum"),
         Landmark(-55.0, 60, "high_vacuum"),
         Landmark(-31.0, 50, "mod_vacuum"),
-        # Idle pocket MAP band (default 30–45 kPa) — integer inHg inside band
-        Landmark(idle_lo, 95, "idle_map_lo"),
-        Landmark(idle_mid, 90, "idle_map_mid"),
-        Landmark(idle_hi, 95, "idle_map_hi"),
+        Landmark(-20.0, 70, "idle_ish"),
         Landmark(-10.0, 50, "light_vacuum"),
         Landmark(-2.5, 70, "near_atm_vac"),
         Landmark(0.0, 100, "atmosphere"),
@@ -425,6 +398,7 @@ def load_landmarks_inhg(spec: EngineSpec) -> list[Landmark]:
     if overboost > 1e-9:
         marks.append(Landmark(overboost, 95, "overboost"))
     return marks
+
 
 
 def select_axis(
@@ -525,28 +499,28 @@ def select_axis(
 
 
 def generate_load_axis(spec: EngineSpec, count: int, *, unit: str = "kPa") -> list[float]:
-    """Build load breakpoints (landmark priority + gap fill, like RPM).
+    """Build load breakpoints in **kPa abs first**, then convert if needed.
 
-    NA (``boost_psi == 0``): atmosphere is a fence — fillers densify at/below
-    it for any table size (12, 24, …); exactly one tip row sits above (overboost).
+    All landmark / NA / idle-MAP-band logic runs in kPa (same as default).
+    For ``inHg`` / ``inhg_gauge`` (alpha), each breakpoint is converted with
+    ``kpa_abs_to_inhg_gauge`` afterward — no separate inHg landmark math.
     """
-    if unit.lower() in {"inhg", "inhg_gauge"}:
-        floor = -90.0
-        over = _overboost_inhg(spec)
-        marks = load_landmarks_inhg(spec)
-        nfa = 0.0 if spec.boost_psi <= 0 else None
-        return select_axis(
-            marks, count, floor=floor, ceiling=over, no_fill_above=nfa
-        )
-
     floor = 20.0
     atm = float(spec.atm_kpa)
     over = _overboost_kpa(spec)
     marks = load_landmarks_kpa(spec)
-    nfa = atm if spec.boost_psi <= 0 else None
-    return select_axis(
+    nfa = atm if float(spec.boost_psi) <= 0 else None
+    kpa_axis = select_axis(
         marks, count, floor=floor, ceiling=over, no_fill_above=nfa
     )
+
+    u = unit.lower()
+    if u in {"inhg", "inhg_gauge"}:
+        return [
+            float(kpa_abs_to_inhg_gauge(v, atm))
+            for v in kpa_axis
+        ]
+    return kpa_axis
 
 def example_axes_for_docs(spec: EngineSpec | None = None) -> dict[str, list[float]]:
     spec = spec or EngineSpec()
