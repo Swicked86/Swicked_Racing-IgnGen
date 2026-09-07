@@ -61,6 +61,7 @@ def load_vehicle(path: Path) -> VehicleProfile:
     eng = cp["engine"] if cp.has_section("engine") else {}
     mech = cp["mechanical"] if cp.has_section("mechanical") else {}
     vac = cp["vacuum"] if cp.has_section("vacuum") else {}
+    idle = cp["idle"] if cp.has_section("idle") else {}
 
     def f(section, key, default: float) -> float:
         if key not in section:
@@ -88,6 +89,9 @@ def load_vehicle(path: Path) -> VehicleProfile:
         boost_psi=boost_psi,
         idle_rpm=f(eng, "idle_rpm", 1100),
         idle_pocket_width=f(eng, "idle_pocket_width", 250),
+        idle_map_lo=f(idle, "idle_map_lo", 30),
+        idle_map_hi=f(idle, "idle_map_hi", 45),
+        idle_pocket_bump=f(idle, "idle_pocket_bump", 2),
         base_timing=f(mech, "base_timing", 10),
         mech_timing_at_peak_torque=f(mech, "mech_timing_at_peak_torque", 32),
         vacuum_total_timing=(
@@ -136,7 +140,7 @@ def describe_vehicle(v: VehicleProfile) -> str:
         f"  {s.displacement_cc:.0f} cc | {s.peak_hp:.0f} hp @{s.peak_hp_rpm:.0f} | "
         f"{s.peak_torque_lbft:.0f} lb-ft @{s.peak_torque_rpm:.0f} | "
         f"redline {s.redline_rpm:.0f}\n"
-        f"  idle {s.idle_rpm:.0f} ±{half:.0f} (pocket width {s.idle_pocket_width:.0f}) | "
+        f"  idle {s.idle_rpm:.0f} ±{half:.0f} (pocket width {s.idle_pocket_width:.0f}, MAP {s.idle_map_lo:.0f}–{s.idle_map_hi:.0f} kPa ±{s.idle_pocket_bump:.0f}°) | "
         f"base {s.base_timing:.0f}° → peak mech {s.mech_timing_at_peak_torque:.0f}° | "
         f"vac total {s.vacuum_total_timing:.0f}° | boost limit {s.boost_timing_limit:.0f}° | "
         f"boost {boost_note}"
