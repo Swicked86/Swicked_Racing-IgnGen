@@ -8,11 +8,11 @@ Review each layer before enabling the next:
 
 1. **`mechanical`** — RPM-only curve; load rows are identical
 2. **`vacuum`** — mechanical + vacuum (total timing)
-3. **`boost` (current review)** — vacuum + boost retard (mirror fan from 100 kPa)
-4. Idle pocket
+3. **`boost`** — vacuum + boost retard (mirror fan from 100 kPa)
+4. **`idle` (current review)** — boost + idle pocket (±° across idle MAP band)
 5. Soft redline retard
 
-CLI: `igngen new --layers mechanical|vacuum|boost|full` (default **`boost`**).
+CLI: `igngen new --layers mechanical|vacuum|boost|idle|full` (default **`idle`**).
 
 ## Inputs
 
@@ -52,7 +52,10 @@ Optional later: compressor efficiency / NA base HP for turbo VE concepts (shared
    - Full retard at ≥ configured max boost MAP → that limit (once mechanical all-in)
    - Below peak-torque RPM: retard × mechanical_progress
    - Load cells between atm and max boost → **whole-degree** staircase
-4. **Idle pocket**: localized only around idle RPM ± pocket width and **light load only** — later layer
+4. **Idle pocket** (localized basin at idle RPM × idle MAP):
+   - Typical idle vacuum band **30–45 kPa** abs (fixed defaults; mild cams)
+   - One prompt: **Idle stabilization (°)** — bottom of band **+N°**, top **−N°** (default **2**)
+   - Only inside idle RPM pocket width (already prompted) and that MAP band
 5. **Soft power loss**: start retarding ~500 RPM before redline — later layer
 6. Atmosphere (**100 kPa** abs / ~0 inHg Alpha gauge) **always** on the load axis as crossover
 7. Normal generated map: **whole degrees**, floor **≥ 0**
