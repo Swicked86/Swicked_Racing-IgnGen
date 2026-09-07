@@ -36,16 +36,21 @@ def mechanical_timing(rpm: float, spec: EngineParameters) -> float:
     )
 
 
+def pressure_span_kpa(spec: EngineParameters) -> float:
+    """Shared pressure scale either side of atmosphere.
+
+    The vacuum side establishes the physical kPa span. With the normal
+    100 -> 40 kPa vacuum curve this is 60 kPa. Boost mirrors that same
+    pressure distance above atmosphere before the optional boost gain is applied.
+    """
+    return max(spec.atm_kpa - spec.vacuum_full_map_kpa, 1.0)
+
+
 def vacuum_map_fraction(map_kpa: float, spec: EngineParameters) -> float:
     """0 at atmosphere, 1 at/below the full-vacuum diaphragm stop."""
     if map_kpa >= spec.atm_kpa:
         return 0.0
-    if map_kpa <= spec.vacuum_full_map_kpa:
-        return 1.0
-    return clamp01(
-        (spec.atm_kpa - map_kpa)
-        / max(spec.atm_kpa - spec.vacuum_full_map_kpa, 1.0)
-    )
+    return clamp01((spec.atm_kpa - map_kpa) / pressure_span_kpa(spec))
 
 
 def vacuum_add_at(rpm: float, map_kpa: float, spec: EngineParameters) -> float:
@@ -66,36 +71,35 @@ def vacuum_add_at(rpm: float, map_kpa: float, spec: EngineParameters) -> float:
     )
 
 
-def suggested_boost_limit_from_rate(spec: EngineParameters) -> float:
-    """Heuristic full-boost target using degrees of retard per psi."""
-    return float(
-        spec.mech_timing_at_peak_torque
-        - max(0.0, spec.boost_psi) * spec.boost_retard_deg_per_psi
-    )
-
-
 def boost_map_fraction(map_kpa: float, spec: EngineParameters) -> float:
-    """0 at atmosphere, 1 at/above configured maximum boost MAP."""
+    """Mirror the vacuum kPa curve above atmosphere, then apply boost gain.
+
+    A gain of 1.0 is a literal mirror of the vacuum pressure scale. If the
+    vacuum curve reaches its stop 60 kPa below atmosphere, boost reaches its
+    timing limit 60 kPa above atmosphere.
+
+    Gain > 1.0 brings retard in sooner. Gain < 1.0 brings it in more slowly.
+    This is deliberately a pressure-domain gain, not degrees-per-psi math.
+
+    Example with a 60-kPa vacuum span:
+      gain 1.00 -> full retard at 160 kPa
+      gain 0.75 -> full retard at 180 kPa
+      gain 0.60 -> full retard at 200 kPa
+      gain 1.50 -> full retard at 140 kPa
+    """
     if spec.boost_psi <= 0.0 or map_kpa <= spec.atm_kpa:
         return 0.0
-    full_map = spec.max_boost_map_kpa
-    if map_kpa >= full_map:
-        return 1.0
+    gain = max(0.0, float(spec.boost_retard_gain))
     return clamp01(
-        (map_kpa - spec.atm_kpa)
-        / max(full_map - spec.atm_kpa, 1.0)
+        ((map_kpa - spec.atm_kpa) / pressure_span_kpa(spec)) * gain
     )
 
 
 def full_boost_target_at_rpm(rpm: float, spec: EngineParameters) -> float:
-    """Inverted target fan for the boost side.
+    """Absolute boost timing limit phased in with mechanical progress.
 
-    This does not start with a fixed number of degrees and subtract it blindly
-    from the low-RPM master curve. Instead, the full-boost target itself moves
-    from base timing toward the configured minimum as the RPM curve progresses.
-
-    At/below idle: full-boost target == base timing.
-    At/above peak torque: full-boost target == boost_timing_limit.
+    The tuner enters the desired total timing limit directly. IgnGen performs
+    the subtraction internally, so no retard-angle arithmetic is required.
     """
     progress = mechanical_progress(rpm, spec)
     return float(
@@ -105,7 +109,7 @@ def full_boost_target_at_rpm(rpm: float, spec: EngineParameters) -> float:
 
 
 def pressure_timing(rpm: float, map_kpa: float, spec: EngineParameters) -> float:
-    """Mechanical + pressure behavior before idle/limiter overrides."""
+    """100-kPa master curve with mirrored vacuum/boost pressure corrections."""
     master = mechanical_timing(rpm, spec)
 
     if map_kpa < spec.atm_kpa:
