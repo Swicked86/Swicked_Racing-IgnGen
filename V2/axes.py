@@ -94,7 +94,6 @@ def _rpm_structural_anchors(spec: EngineParameters) -> list[float]:
 
 
 def generate_rpm_axis(spec: EngineParameters, count: int) -> list[float]:
-    """Generate RPM breakpoints using protected anchors + 2:1 discretionary budget."""
     if count < 2:
         raise ValueError("RPM axis requires at least 2 cells")
 
@@ -241,12 +240,11 @@ def generate_load_axis(spec: EngineParameters, count: int) -> list[float]:
     Policy:
       * exactly one structural row below the lowest normal idle MAP for decel;
       * preserve idle MAP low/mid/high landmarks when table size permits;
-      * spend discretionary NA resolution from the idle region toward 100 kPa;
+      * place no discretionary rows below or inside the idle band;
+      * spend discretionary NA resolution above idle toward 100 kPa;
       * always preserve 100 kPa as the atmosphere crossover;
       * for boosted engines, preserve max boost and one overboost row and spend
         remaining rows cleanly between atmosphere and max boost.
-
-    No discretionary rows are placed below idle_map_lo.
     """
     if count < 2:
         raise ValueError("load axis requires at least 2 cells")
@@ -318,17 +316,16 @@ def generate_load_axis(spec: EngineParameters, count: int) -> list[float]:
 
     result = _unique_sorted(result)
 
-    # Large tables or a high-MAP idle (for example a large camshaft) may not have
-    # enough 5-kPa positions above idle to satisfy the requested row count. Fill
-    # progressively with clean 5, 2, then 1-kPa breakpoints, but never below
-    # idle_map_lo. This preserves the one-row-only decel policy.
+    # If a coarse clean ladder cannot satisfy a large requested table, refine only
+    # above the idle band. The idle box itself keeps just lo/mid/hi, and only the
+    # single decel row is permitted below idle_lo.
     for step in (5, 2, 1):
         if len(result) >= count:
             break
         candidates = [
             v
-            for v in _load_ladder(idle_lo, overboost, step)
-            if v not in result and idle_lo < v < overboost
+            for v in _load_ladder(idle_hi, overboost, step)
+            if v not in result and idle_hi < v < overboost
         ]
         while len(result) < count and candidates:
             gaps: list[tuple[float, float]] = []
@@ -351,5 +348,10 @@ def generate_load_axis(spec: EngineParameters, count: int) -> list[float]:
     below_idle = [value for value in result if value < idle_lo]
     if len(below_idle) > 1:
         raise AssertionError("load axis allocated more than one row below idle MAP")
+
+    inside_idle = [value for value in result if idle_lo < value < idle_hi]
+    allowed_inside = {idle_mid}
+    if any(value not in allowed_inside for value in inside_idle):
+        raise AssertionError("load axis allocated discretionary rows inside idle MAP band")
 
     return result
