@@ -47,7 +47,7 @@ Use `--model simple` for the older idle/cruise/WOT blend.
 |---------|----------------|
 | `igngen presets` | List axis presets |
 | `igngen new` | Generate a table (preset or custom axes) |
-| `igngen show` | Heatmap print (`--layout alphalink\|swicked`) |
+| `igngen show` | Heatmap print (`--layout alpha\|default`) |
 | `igngen bump` / `clamp` / `convert` | Edit / convert tables |
 
 ## Orientation layers
@@ -55,7 +55,7 @@ Use `--model simple` for the older idle/cruise/WOT blend.
 Internal storage is always **RPM ascending × load ascending**.
 
 - **Display `alphalink`**: RPM top→bottom, load left→right (matches the ALPHAlink UI)
-- **Display `swicked`**: load high→low rows, RPM left→right (preferred reading layout from research notes)
+- **Display `default`**: load high→low rows, RPM left→right (preferred reading layout from research notes)
 - **CSV export**: ALPHAlink-friendly by default (rpm rows, load columns)
 
 ## Tests
