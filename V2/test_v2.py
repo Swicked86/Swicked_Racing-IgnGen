@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .axes import generate_load_axis, generate_rpm_axis
 from .profiles import EngineParameters, load_engine_profile, save_engine_profile
-from .timing import mechanical_timing, timing_at
+from .timing import boost_map_fraction, mechanical_timing, timing_at
 
 
 def _example() -> EngineParameters:
@@ -123,6 +123,44 @@ def test_vacuum_is_full_at_40_kpa_only_after_mechanical_progress() -> None:
     assert timing_at(750, 40, spec, include_idle_pocket=False, include_soft_limit=False) == 15
 
 
+def test_boost_mirrors_vacuum_kpa_span_at_gain_one() -> None:
+    spec = _example().with_overrides(
+        boost_psi=25,
+        base_timing=15,
+        mech_timing_at_peak_torque=36,
+        vacuum_full_map_kpa=40,
+        boost_timing_limit=20,
+        boost_retard_gain=1.0,
+    )
+    # Vacuum span is 100 -> 40 = 60 kPa, so mirrored boost span is 100 -> 160.
+    assert boost_map_fraction(100, spec) == 0.0
+    assert boost_map_fraction(130, spec) == 0.5
+    assert boost_map_fraction(160, spec) == 1.0
+    assert timing_at(3500, 100, spec, include_idle_pocket=False, include_soft_limit=False) == 36
+    assert timing_at(3500, 130, spec, include_idle_pocket=False, include_soft_limit=False) == 28
+    assert timing_at(3500, 160, spec, include_idle_pocket=False, include_soft_limit=False) == 20
+    assert timing_at(3500, 275, spec, include_idle_pocket=False, include_soft_limit=False) == 20
+
+
+def test_boost_gain_moves_limit_point_without_changing_limit() -> None:
+    base = _example().with_overrides(
+        boost_psi=25,
+        mech_timing_at_peak_torque=36,
+        vacuum_full_map_kpa=40,
+        boost_timing_limit=20,
+    )
+    slower = base.with_overrides(boost_retard_gain=0.60)
+    faster = base.with_overrides(boost_retard_gain=1.50)
+
+    # 60-kPa mirrored pressure span: 0.60 gain reaches full retard at 200 kPa.
+    assert boost_map_fraction(200, slower) == 1.0
+    assert timing_at(3500, 200, slower, include_idle_pocket=False, include_soft_limit=False) == 20
+
+    # 1.50 gain reaches full retard at 140 kPa.
+    assert boost_map_fraction(140, faster) == 1.0
+    assert timing_at(3500, 140, faster, include_idle_pocket=False, include_soft_limit=False) == 20
+
+
 def test_idle_pocket_overrides_pressure_surface() -> None:
     spec = _example()
     assert timing_at(725, 35, spec, include_soft_limit=False) == 16
@@ -141,7 +179,13 @@ def test_temporary_overrides_do_not_mutate_loaded_defaults() -> None:
 
 
 def test_save_and_reload_custom_engine(tmp_path) -> None:
-    spec = _example().with_overrides(name="Cammed B18", description="test profile", idle_map_lo=48, idle_map_hi=62)
+    spec = _example().with_overrides(
+        name="Cammed B18",
+        description="test profile",
+        idle_map_lo=48,
+        idle_map_hi=62,
+        boost_retard_gain=0.75,
+    )
     path = tmp_path / "cammed_b18.ini"
     save_engine_profile(spec, path)
     loaded = load_engine_profile(path)
@@ -153,3 +197,4 @@ def test_save_and_reload_custom_engine(tmp_path) -> None:
     assert loaded.idle_timing_delta == 6
     assert loaded.idle_map_lo == 48
     assert loaded.idle_map_hi == 62
+    assert loaded.boost_retard_gain == 0.75
