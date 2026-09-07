@@ -47,15 +47,15 @@ Optional later: compressor efficiency / NA base HP for turbo VE concepts (shared
    - Load cells between 40 kPa and atm → **whole-degree** staircase
      from (mech + scaled add) down to mechanical
 3. **Boost retard** (mirrors vacuum on the boost side of 100 kPa):
-   - One prompt: **Boost timing limit** (total ° min under full boost; default **20°**)
+   - One prompt: **Boost timing retard limit** (total ° min under full boost; default **20°**)
    - **100 kPa row = mechanical** (master)
    - Full retard at ≥ configured max boost MAP → that limit (once mechanical all-in)
    - Below peak-torque RPM: retard × mechanical_progress
    - Load cells between atm and max boost → **whole-degree** staircase
 4. **Idle pocket** (localized basin at idle RPM × idle MAP):
-   - Prompt: **Idle pocket (±RPM from idle)** — e.g. 750 ± 100 → landmarks 650 / 750 / 850
+   - Prompt: **Idle pocket ±RPM** — e.g. 750 ± 100 → landmarks 650 / 750 / 850
    - Typical idle vacuum band **30–45 kPa** abs (where the pocket applies)
-   - Prompt: **Idle stabilization (±°)** — pocket lower **+N°**, idle **0°**,
+   - Prompt: **Idle stabilization ±°** — pocket lower **+N°**, idle **0°**,
      pocket upper **−N°** (default **2**)
 5. **Soft power loss**: start retarding ~500 RPM before redline — later layer
 6. Atmosphere (**100 kPa** abs / ~0 inHg Alpha gauge) **always** on the load axis as crossover
