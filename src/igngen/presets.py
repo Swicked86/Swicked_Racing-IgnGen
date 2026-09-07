@@ -80,7 +80,7 @@ ALPHA = AxisPreset(
 BASE = AxisPreset(
     name="base",
     description=(
-        "Base Swicked grid: 16×12 MAP(kPa)×RPM-style axes with atmosphere at 100. "
+        "Base grid: 16×12 MAP(kPa)×RPM-style axes with atmosphere at 100. "
         "Map origin is bottom-left (RPM right, load up)."
     ),
     rpm=(
