@@ -134,13 +134,12 @@ def describe_vehicle(v: VehicleProfile) -> str:
     boost_note = f"{s.boost_psi:.1f} psi"
     if v.boost_bar_abs is not None:
         boost_note = f"{v.boost_bar_abs:.2f} bar abs (~{s.boost_psi:.1f} psi gauge)"
-    half = s.idle_pocket_width / 2.0
-    return (
+        return (
         f"{v.name}: {v.description}\n"
         f"  {s.displacement_cc:.0f} cc | {s.peak_hp:.0f} hp @{s.peak_hp_rpm:.0f} | "
         f"{s.peak_torque_lbft:.0f} lb-ft @{s.peak_torque_rpm:.0f} | "
         f"redline {s.redline_rpm:.0f}\n"
-        f"  idle {s.idle_rpm:.0f} ±{half:.0f} (pocket width {s.idle_pocket_width:.0f}, MAP {s.idle_map_lo:.0f}–{s.idle_map_hi:.0f} kPa ±{s.idle_pocket_bump:.0f}°) | "
+        f"  idle {s.idle_rpm:.0f} ±{s.idle_pocket_width:.0f} RPM (MAP {s.idle_map_lo:.0f}–{s.idle_map_hi:.0f} kPa ±{s.idle_pocket_bump:.0f}°) | "
         f"base {s.base_timing:.0f}° → peak mech {s.mech_timing_at_peak_torque:.0f}° | "
         f"vac total {s.vacuum_total_timing:.0f}° | boost limit {s.boost_timing_limit:.0f}° | "
         f"boost {boost_note}"
