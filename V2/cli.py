@@ -11,7 +11,7 @@ from .profiles import (
     save_engine_profile,
 )
 from .render import build_table
-from .timing import suggested_boost_limit_from_rate
+from .timing import pressure_span_kpa
 
 
 def _csv_axis(value: str | None) -> list[float] | None:
@@ -54,8 +54,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--show", action="store_true")
     parser.add_argument("--list-engines", action="store_true")
 
-    # Temporary engine/calibration overrides. These do not touch the selected
-    # engine INI unless the user explicitly requests --save-engine.
     parser.add_argument("--name")
     parser.add_argument("--description")
     parser.add_argument("--displacement-cc", dest="displacement_cc", type=float)
@@ -68,68 +66,44 @@ def main(argv: list[str] | None = None) -> int:
 
     parser.add_argument("--idle-rpm", dest="idle_rpm", type=float)
     parser.add_argument("--idle-pocket-width", dest="idle_pocket_width", type=float)
-    parser.add_argument(
-        "--idle-pocket-lower-share", dest="idle_pocket_lower_share", type=float
-    )
-    parser.add_argument(
-        "--idle-pocket-upper-share", dest="idle_pocket_upper_share", type=float
-    )
+    parser.add_argument("--idle-pocket-lower-share", dest="idle_pocket_lower_share", type=float)
+    parser.add_argument("--idle-pocket-upper-share", dest="idle_pocket_upper_share", type=float)
     parser.add_argument("--idle-timing-target", dest="idle_timing_target", type=float)
     parser.add_argument("--idle-timing-delta", dest="idle_timing_delta", type=float)
-    parser.add_argument(
-        "--idle-map-lo",
-        dest="idle_map_lo",
-        type=float,
-        help="Temporary warm-idle MAP lower bound, kPa absolute",
-    )
-    parser.add_argument(
-        "--idle-map-hi",
-        dest="idle_map_hi",
-        type=float,
-        help="Temporary warm-idle MAP upper bound, kPa absolute",
-    )
+    parser.add_argument("--idle-map-lo", dest="idle_map_lo", type=float)
+    parser.add_argument("--idle-map-hi", dest="idle_map_hi", type=float)
 
     parser.add_argument("--cranking-rpm", dest="cranking_rpm", type=float)
     parser.add_argument("--cranking-timing", dest="cranking_timing", type=float)
     parser.add_argument("--base-timing", dest="base_timing", type=float)
-    parser.add_argument(
-        "--mech-at-peak-torque", dest="mech_timing_at_peak_torque", type=float
-    )
+    parser.add_argument("--mech-at-peak-torque", dest="mech_timing_at_peak_torque", type=float)
     parser.add_argument("--vacuum-total", dest="vacuum_total_timing", type=float)
-    parser.add_argument(
-        "--vacuum-full-map", dest="vacuum_full_map_kpa", type=float
-    )
+    parser.add_argument("--vacuum-full-map", dest="vacuum_full_map_kpa", type=float)
     parser.add_argument("--boost-timing-limit", dest="boost_timing_limit", type=float)
     parser.add_argument(
-        "--boost-retard-deg-per-psi", dest="boost_retard_deg_per_psi", type=float
+        "--boost-retard-gain",
+        dest="boost_retard_gain",
+        type=float,
+        help="Pressure-domain boost retard gain: 1=same kPa rate as vacuum, >1 sooner, <1 slower",
+    )
+    parser.add_argument(
+        "--boost-retard-deg-per-psi",
+        dest="boost_retard_deg_per_psi",
+        type=float,
+        help="Legacy/reference-only heuristic; V2 timing generation does not use it",
     )
     parser.add_argument("--atm-kpa", dest="atm_kpa", type=float)
     parser.add_argument("--map-floor-kpa", dest="map_floor_kpa", type=float)
-    parser.add_argument(
-        "--soft-limit-rpm-before-redline",
-        dest="soft_limit_rpm_before_redline",
-        type=float,
-    )
+    parser.add_argument("--soft-limit-rpm-before-redline", dest="soft_limit_rpm_before_redline", type=float)
     parser.add_argument("--soft-limit-retard", dest="soft_limit_retard", type=float)
-    parser.add_argument(
-        "--overspeed-rpm-after-redline",
-        dest="overspeed_rpm_after_redline",
-        type=float,
-    )
+    parser.add_argument("--overspeed-rpm-after-redline", dest="overspeed_rpm_after_redline", type=float)
 
     parser.add_argument(
         "--save-engine",
         metavar="NAME_OR_PATH",
-        help=(
-            "Save the current selected profile plus temporary overrides as a new "
-            "engine INI. A bare name is written under engines/."
-        ),
+        help="Save current profile plus temporary overrides as a new engine INI",
     )
-    parser.add_argument(
-        "--overwrite-engine",
-        action="store_true",
-        help="Allow --save-engine to replace an existing local INI",
-    )
+    parser.add_argument("--overwrite-engine", action="store_true")
 
     args = parser.parse_args(argv)
 
@@ -148,13 +122,14 @@ def main(argv: list[str] | None = None) -> int:
         raise ValueError("idle_pocket_width must be greater than zero")
     if spec.redline_rpm <= spec.idle_rpm:
         raise ValueError("redline_rpm must be greater than idle_rpm")
+    if spec.boost_retard_gain < 0:
+        raise ValueError("boost_retard_gain must be >= 0")
 
     manual_rpm = _csv_axis(args.rpm_values)
     manual_load = _csv_axis(args.load_values)
     rpm_axis = manual_rpm or generate_rpm_axis(spec, args.rpm_cells)
     load_axis = manual_load or generate_load_axis(spec, args.load_cells)
 
-    # Manual load axes still obey the mandatory atmosphere invariant.
     if manual_load is not None and not any(abs(v - spec.atm_kpa) < 1e-9 for v in load_axis):
         raise ValueError(
             f"manual load axis must include atmosphere crossover ({spec.atm_kpa:g} kPa)"
@@ -177,21 +152,22 @@ def main(argv: list[str] | None = None) -> int:
         f"base={spec.base_timing:.0f}°, "
         f"peak-mech={spec.mech_timing_at_peak_torque:.0f}°, "
         f"vac-total={spec.vacuum_total_timing:.0f}° @ <= {spec.vacuum_full_map_kpa:.0f} kPa, "
-        f"boost-target={spec.boost_timing_limit:.0f}°"
+        f"boost-limit={spec.boost_timing_limit:.0f}°"
     )
     if spec.boost_psi > 0:
-        print(
-            f"{spec.boost_retard_deg_per_psi:g}°/psi heuristic would suggest "
-            f"~{suggested_boost_limit_from_rate(spec):.1f}° at {spec.boost_psi:.1f} psi; "
-            "profile target remains authoritative."
-        )
+        span = pressure_span_kpa(spec)
+        if spec.boost_retard_gain > 0:
+            full_retard_map = spec.atm_kpa + span / spec.boost_retard_gain
+            print(
+                f"Boost retard mirrors the {span:g} kPa vacuum span; gain "
+                f"{spec.boost_retard_gain:g} reaches the timing limit at "
+                f"~{full_retard_map:.0f} kPa abs and holds it above that point."
+            )
+        else:
+            print("Boost retard gain is 0: no pressure-based boost retard is applied.")
 
     if args.save_engine:
-        saved = save_engine_profile(
-            spec,
-            args.save_engine,
-            overwrite=args.overwrite_engine,
-        )
+        saved = save_engine_profile(spec, args.save_engine, overwrite=args.overwrite_engine)
         print(f"Saved engine profile: {saved}")
 
     if args.show:
