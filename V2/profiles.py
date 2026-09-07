@@ -1,15 +1,24 @@
 from __future__ import annotations
 
 import configparser
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 BAR_TO_PSI = 14.5037738
+KPA_PER_PSI = 6.895
 
 
 @dataclass
 class EngineParameters:
-    name: str = "custom"
+    """Canonical V2 engine/calibration inputs.
+
+    Engine INI files provide defaults. The application can create a temporary
+    copy with ``with_overrides`` for one table generation without modifying the
+    profile. ``save_engine_profile`` is the explicit persistence path.
+    """
+
+    name: str = "other"
     description: str = "Custom engine"
 
     displacement_cc: float = 1600.0
@@ -21,14 +30,20 @@ class EngineParameters:
     boost_psi: float = 0.0
 
     idle_rpm: float = 750.0
-    # Total RPM span of the idle pocket, not +/- RPM.
+
+    # TOTAL pocket span. Default 100 RPM: 25 RPM below / 75 RPM above idle.
     idle_pocket_width: float = 100.0
     idle_pocket_lower_share: float = 0.25
     idle_pocket_upper_share: float = 0.75
+
+    # Pocket timing is independent of distributor/base timing.
+    idle_timing_target: float = 10.0
+    idle_timing_delta: float = 6.0
+
+    # Warm-idle MAP operating band. These are calibration values; a camshaft,
+    # intake, exhaust, or idle-speed change can move them substantially.
     idle_map_lo: float = 30.0
     idle_map_hi: float = 45.0
-    # Default pocket authority around the idle timing target.
-    idle_pocket_bump: float = 6.0
 
     cranking_rpm: float = 500.0
     cranking_timing: float = 10.0
@@ -48,14 +63,8 @@ class EngineParameters:
     atm_kpa: float = 100.0
     map_floor_kpa: float = 20.0
 
-    # Optional explicit idle-pocket targets. If omitted, V2 defaults to
-    # 10 deg BTDC at target idle, +6 deg on the catch side, -6 deg on the
-    # upper/retard side. Engine profiles may override any of these.
-    idle_timing_low: float | None = None
-    idle_timing_target: float | None = None
-    idle_timing_high: float | None = None
-
-    def _idle_pocket_shares(self) -> tuple[float, float]:
+    @property
+    def normalized_idle_shares(self) -> tuple[float, float]:
         lower = max(0.0, float(self.idle_pocket_lower_share))
         upper = max(0.0, float(self.idle_pocket_upper_share))
         total = lower + upper
@@ -65,7 +74,7 @@ class EngineParameters:
 
     @property
     def idle_pocket_lo_rpm(self) -> float:
-        lower, _ = self._idle_pocket_shares()
+        lower, _ = self.normalized_idle_shares
         return max(
             self.cranking_rpm,
             self.idle_rpm - self.idle_pocket_width * lower,
@@ -73,7 +82,7 @@ class EngineParameters:
 
     @property
     def idle_pocket_hi_rpm(self) -> float:
-        _, upper = self._idle_pocket_shares()
+        _, upper = self.normalized_idle_shares
         return self.idle_rpm + self.idle_pocket_width * upper
 
     @property
@@ -86,20 +95,21 @@ class EngineParameters:
 
     @property
     def max_boost_map_kpa(self) -> float:
-        return self.atm_kpa + max(0.0, self.boost_psi) * 6.895
+        return self.atm_kpa + max(0.0, self.boost_psi) * KPA_PER_PSI
 
     def derived_idle_targets(self) -> tuple[float, float, float]:
-        target = self.idle_timing_target
-        if target is None:
-            target = 10.0
+        """Return catch / target / upper-pocket timing targets."""
+        target = float(self.idle_timing_target)
+        delta = max(0.0, float(self.idle_timing_delta))
+        return target + delta, target, target - delta
 
-        low = self.idle_timing_low
-        high = self.idle_timing_high
-        if low is None:
-            low = target + self.idle_pocket_bump
-        if high is None:
-            high = target - self.idle_pocket_bump
-        return float(low), float(target), float(high)
+    def with_overrides(self, **changes: float | str | None) -> "EngineParameters":
+        """Return a temporary profile copy; ``None`` values are ignored."""
+        usable = {key: value for key, value in changes.items() if value is not None}
+        unknown = set(usable) - set(self.__dataclass_fields__)
+        if unknown:
+            raise KeyError(f"unknown engine override(s): {', '.join(sorted(unknown))}")
+        return replace(self, **usable)
 
 
 def _engine_dirs(search_dirs: list[Path] | None = None) -> list[Path]:
@@ -134,6 +144,10 @@ def list_engine_profiles(search_dirs: list[Path] | None = None) -> list[Path]:
 
 
 def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None = None) -> EngineParameters:
+    """Load an engine profile or return generic defaults for ``other``."""
+    if str(path_or_name).strip().lower() in {"other", "custom", "new"}:
+        return EngineParameters()
+
     path = Path(path_or_name)
     if not path.is_file():
         found = find_engine_profile(str(path_or_name), search_dirs=search_dirs)
@@ -186,28 +200,9 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
     if explicit_boost_limit is None:
         explicit_boost_limit = mech_peak - boost_psi * retard_rate
 
-    def optional_number(section, key: str) -> float | None:
-        if key not in section:
-            return None
-        return float(section.get(key))
-
-    # V2 intentionally does not inherit V1's [engine] idle_pocket_width or
-    # [idle] idle_pocket_bump fields. Those fields used the old symmetric
-    # pocket semantics. V2 uses the explicit fields below and otherwise the
-    # new 100-RPM, 25/75, 10 +/- 6 defaults.
-    pocket_width = number(idle, "idle_pocket_width", defaults.idle_pocket_width)
-    pocket_lower_share = number(
-        idle,
-        "idle_pocket_lower_share",
-        defaults.idle_pocket_lower_share,
-    )
-    pocket_upper_share = number(
-        idle,
-        "idle_pocket_upper_share",
-        defaults.idle_pocket_upper_share,
-    )
-    pocket_bump = number(idle, "idle_timing_delta", defaults.idle_pocket_bump)
-
+    # V2 pocket settings live in [idle]. Legacy V1's [engine]
+    # idle_pocket_width was +/-RPM, so it is intentionally not imported as a
+    # V2 total-width value.
     return EngineParameters(
         name=str(profile.get("name", path.stem)),
         description=str(profile.get("description", path.stem)),
@@ -219,12 +214,19 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
         redline_rpm=number(engine, "redline_rpm", defaults.redline_rpm),
         boost_psi=boost_psi,
         idle_rpm=number(engine, "idle_rpm", defaults.idle_rpm),
-        idle_pocket_width=pocket_width,
-        idle_pocket_lower_share=pocket_lower_share,
-        idle_pocket_upper_share=pocket_upper_share,
+        idle_pocket_width=number(idle, "idle_pocket_width", defaults.idle_pocket_width),
+        idle_pocket_lower_share=number(
+            idle, "idle_pocket_lower_share", defaults.idle_pocket_lower_share
+        ),
+        idle_pocket_upper_share=number(
+            idle, "idle_pocket_upper_share", defaults.idle_pocket_upper_share
+        ),
+        idle_timing_target=number(
+            idle, "idle_timing_target", defaults.idle_timing_target
+        ),
+        idle_timing_delta=number(idle, "idle_timing_delta", defaults.idle_timing_delta),
         idle_map_lo=number(idle, "idle_map_lo", defaults.idle_map_lo),
         idle_map_hi=number(idle, "idle_map_hi", defaults.idle_map_hi),
-        idle_pocket_bump=pocket_bump,
         cranking_rpm=number(mechanical, "cranking_rpm", defaults.cranking_rpm),
         cranking_timing=number(mechanical, "cranking_timing", defaults.cranking_timing),
         base_timing=number(mechanical, "base_timing", defaults.base_timing),
@@ -246,7 +248,91 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
         ),
         atm_kpa=number(engine, "atm_kpa", defaults.atm_kpa),
         map_floor_kpa=number(engine, "map_floor_kpa", defaults.map_floor_kpa),
-        idle_timing_low=optional_number(idle, "idle_timing_low"),
-        idle_timing_target=optional_number(idle, "idle_timing_target"),
-        idle_timing_high=optional_number(idle, "idle_timing_high"),
     )
+
+
+def _slug(name: str) -> str:
+    value = re.sub(r"[^A-Za-z0-9_.-]+", "_", name.strip())
+    return value.strip("._") or "custom"
+
+
+def save_engine_profile(
+    spec: EngineParameters,
+    path_or_name: str | Path,
+    *,
+    engine_dir: str | Path = "engines",
+    overwrite: bool = False,
+) -> Path:
+    """Persist the current parameters as a tuner-readable engine INI."""
+    destination = Path(path_or_name)
+    if destination.suffix.lower() != ".ini" and destination.parent == Path("."):
+        destination = Path(engine_dir) / f"{_slug(str(path_or_name))}.ini"
+    elif destination.suffix.lower() != ".ini":
+        destination = destination.with_suffix(".ini")
+
+    if destination.exists() and not overwrite:
+        raise FileExistsError(f"engine profile already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+
+    lower_share, upper_share = spec.normalized_idle_shares
+    text = f"""; IgnGen V2 engine profile: {spec.name}
+; Values in this file are defaults. The application may temporarily override
+; them for one generated table without changing this profile.
+
+[profile]
+name = {spec.name}
+description = {spec.description}
+
+[engine]
+displacement_cc = {spec.displacement_cc:g}
+peak_hp = {spec.peak_hp:g}
+peak_hp_rpm = {spec.peak_hp_rpm:g}
+peak_torque_lbft = {spec.peak_torque_lbft:g}
+peak_torque_rpm = {spec.peak_torque_rpm:g}
+redline_rpm = {spec.redline_rpm:g}
+boost_psi = {spec.boost_psi:g}
+idle_rpm = {spec.idle_rpm:g}
+atm_kpa = {spec.atm_kpa:g}
+map_floor_kpa = {spec.map_floor_kpa:g}
+
+[mechanical]
+; 500 RPM is the normal V2 running/synchronized ignition handoff anchor.
+cranking_rpm = {spec.cranking_rpm:g}
+cranking_timing = {spec.cranking_timing:g}
+base_timing = {spec.base_timing:g}
+mech_timing_at_peak_torque = {spec.mech_timing_at_peak_torque:g}
+
+[vacuum]
+; Full-vacuum advance is reached at/below this absolute MAP value.
+vacuum_full_map_kpa = {spec.vacuum_full_map_kpa:g}
+vacuum_total_timing = {spec.vacuum_total_timing:g}
+
+[boost]
+; Explicit full-boost timing target. The 2 deg/psi value is only a heuristic.
+boost_timing_limit = {spec.boost_timing_limit:g}
+boost_retard_deg_per_psi = {spec.boost_retard_deg_per_psi:g}
+
+[idle]
+; Idle pocket width is TOTAL RPM span, not +/-RPM.
+; Default 25/75 split = short catch region below target, longer torque-removal
+; region above target.
+idle_pocket_width = {spec.idle_pocket_width:g}
+idle_pocket_lower_share = {lower_share:g}
+idle_pocket_upper_share = {upper_share:g}
+
+; Pocket timing is target +/- delta and is independent of base timing.
+idle_timing_target = {spec.idle_timing_target:g}
+idle_timing_delta = {spec.idle_timing_delta:g}
+
+; Warm-idle MAP band in kPa absolute. Camshaft/intake/exhaust changes can move
+; idle vacuum substantially; measure the engine and edit these as needed.
+idle_map_lo = {spec.idle_map_lo:g}
+idle_map_hi = {spec.idle_map_hi:g}
+
+[limiter]
+soft_limit_rpm_before_redline = {spec.soft_limit_rpm_before_redline:g}
+soft_limit_retard = {spec.soft_limit_retard:g}
+overspeed_rpm_after_redline = {spec.overspeed_rpm_after_redline:g}
+"""
+    destination.write_text(text, encoding="utf-8")
+    return destination
