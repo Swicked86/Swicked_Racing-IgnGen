@@ -49,7 +49,6 @@ def _fill_clean_interval(
         if float(v) not in protected
     ]
 
-    # If the chosen ladder is too coarse, progressively use a finer ladder.
     if len(ladder) < count:
         for finer in reversed([s for s in steps if s < step]):
             ladder = [
@@ -62,7 +61,6 @@ def _fill_clean_interval(
                 if float(v) not in protected
             ]
             if len(ladder) >= count:
-                step = finer
                 break
 
     if len(ladder) <= count:
@@ -96,18 +94,12 @@ def _rpm_structural_anchors(spec: EngineParameters) -> list[float]:
 
 
 def generate_rpm_axis(spec: EngineParameters, count: int) -> list[float]:
-    """Generate RPM breakpoints using protected anchors + 2:1 discretionary budget.
-
-    The 2:1 ratio is applied only after structural landmarks have been placed.
-    Duplicate landmarks (for example cranking == idle-pocket lower edge) consume
-    one cell, freeing the duplicate cell for useful resolution elsewhere.
-    """
+    """Generate RPM breakpoints using protected anchors + 2:1 discretionary budget."""
     if count < 2:
         raise ValueError("RPM axis requires at least 2 cells")
 
     anchors = _rpm_structural_anchors(spec)
     if len(anchors) > count:
-        # Extremely constrained tables: keep the most important control landmarks.
         priority = [
             spec.cranking_rpm,
             spec.idle_rpm,
@@ -131,7 +123,6 @@ def generate_rpm_axis(spec: EngineParameters, count: int) -> list[float]:
     protected = set(result)
     remaining = count - len(result)
 
-    # Peak HP is a preferred post-torque landmark when it is meaningful and fits.
     hp_rpm = float(round(spec.peak_hp_rpm))
     if (
         remaining > 0
@@ -143,7 +134,6 @@ def generate_rpm_axis(spec: EngineParameters, count: int) -> list[float]:
         protected.add(hp_rpm)
         remaining -= 1
 
-    # Approximately 2/3 of discretionary resolution before peak torque, 1/3 after.
     pre_extra = int(round(remaining * 2.0 / 3.0))
     post_extra = remaining - pre_extra
 
@@ -157,8 +147,6 @@ def generate_rpm_axis(spec: EngineParameters, count: int) -> list[float]:
     result.extend(pre)
     protected.update(pre)
 
-    # Spend the post-torque budget over the full high-RPM region. Existing soft-limit,
-    # redline, overspeed, and optional peak-HP anchors remain fixed.
     post = _fill_clean_interval(
         spec.peak_torque_rpm,
         spec.overspeed_rpm,
@@ -168,7 +156,6 @@ def generate_rpm_axis(spec: EngineParameters, count: int) -> list[float]:
     )
     result.extend(post)
 
-    # If snapping/collisions left cells unused, fill the largest useful clean gaps.
     result = _unique_sorted(result)
     guard = 0
     while len(result) < count and guard < 100:
@@ -180,13 +167,12 @@ def generate_rpm_axis(spec: EngineParameters, count: int) -> list[float]:
         placed = False
         for _, idx in gaps:
             lo, hi = result[idx], result[idx + 1]
-            region_steps = RPM_STEPS
             candidates = _fill_clean_interval(
                 lo,
                 hi,
                 1,
                 protected=set(result),
-                steps=region_steps,
+                steps=RPM_STEPS,
             )
             if candidates:
                 result.append(candidates[0])
@@ -203,9 +189,8 @@ def generate_rpm_axis(spec: EngineParameters, count: int) -> list[float]:
     return result
 
 
-def _nice_map_step(max_map: float, count: int) -> int:
-    span = max(max_map - 20.0, 1.0)
-    raw = span / max(count - 1, 1)
+def _nice_map_step(span: float, count: int) -> int:
+    raw = max(span, 1.0) / max(count - 1, 1)
     return _nearest_step(raw, MAP_STEPS)
 
 
@@ -213,95 +198,164 @@ def _clean_map(value: float, step: int) -> float:
     return _snap(value, step)
 
 
+def _decel_anchor(spec: EngineParameters) -> float:
+    """One clean row below the lowest normal idle-MAP boundary.
+
+    This row represents closed-throttle deceleration / fuel-cut territory. V2
+    intentionally does not spend discretionary rows below idle_map_lo.
+    """
+    idle_lo = float(spec.idle_map_lo)
+    step = 10 if idle_lo >= 30 else 5
+    candidate = math.floor((idle_lo - step) / step) * step
+    return float(max(5.0, candidate))
+
+
+def _load_ladder(lo: float, hi: float, step: int) -> list[float]:
+    start = int(math.ceil(lo / step) * step)
+    end = int(math.floor(hi / step) * step)
+    if end < start:
+        return []
+    return [float(v) for v in range(start, end + 1, step)]
+
+
+def _select_evenly(candidates: list[float], count: int) -> list[float]:
+    """Choose evenly distributed candidates without manufacturing odd breakpoints."""
+    values = sorted(set(candidates))
+    if count <= 0:
+        return []
+    if len(values) <= count:
+        return values
+    if count == 1:
+        return [values[len(values) // 2]]
+
+    selected: list[float] = []
+    available = set(values)
+    ideals = [i * (len(values) - 1) / (count - 1) for i in range(count)]
+    for ideal in ideals:
+        target = values[int(round(ideal))]
+        candidate = min(available, key=lambda x: (abs(x - target), x))
+        selected.append(candidate)
+        available.remove(candidate)
+    return sorted(selected)
+
+
 def generate_load_axis(spec: EngineParameters, count: int) -> list[float]:
-    """Generate a clean kPa-absolute load axis with mandatory 100-kPa crossover."""
+    """Generate a tuner-oriented MAP axis in kPa absolute.
+
+    Policy:
+      * exactly one structural row below the lowest normal idle MAP for decel;
+      * preserve idle MAP low/mid/high landmarks when table size permits;
+      * spend discretionary NA resolution from the idle region toward 100 kPa;
+      * always preserve 100 kPa as the atmosphere crossover;
+      * for boosted engines, preserve max boost and one overboost row and spend
+        remaining rows cleanly between atmosphere and max boost.
+
+    No discretionary rows are placed below idle_map_lo.
+    """
     if count < 2:
         raise ValueError("load axis requires at least 2 cells")
 
-    max_map_actual = max(spec.atm_kpa, spec.max_boost_map_kpa)
-    provisional_step = _nice_map_step(max_map_actual + 20.0, count)
+    atm = float(round(spec.atm_kpa))
+    idle_lo = float(round(spec.idle_map_lo))
+    idle_hi = float(round(spec.idle_map_hi))
+    if idle_hi < idle_lo:
+        idle_lo, idle_hi = idle_hi, idle_lo
+    idle_mid = float(round((idle_lo + idle_hi) / 2.0))
+    decel = _decel_anchor(spec)
 
-    if spec.boost_psi > 0.0:
-        max_boost_anchor = _clean_map(max_map_actual, provisional_step)
-        if max_boost_anchor <= spec.atm_kpa:
-            max_boost_anchor = spec.atm_kpa + provisional_step
-        overboost = max_boost_anchor + provisional_step
+    boosted = spec.boost_psi > 0.0
+    if boosted:
+        boost_span = max(spec.max_boost_map_kpa - atm, 1.0)
+        boost_step = _nice_map_step(boost_span, max(3, count // 3))
+        max_boost = _clean_map(spec.max_boost_map_kpa, boost_step)
+        if max_boost <= atm:
+            max_boost = atm + boost_step
+        overboost = max_boost + boost_step
     else:
-        max_boost_anchor = spec.atm_kpa
-        overboost = spec.atm_kpa + provisional_step
+        max_boost = atm
+        overboost = atm + 5.0
 
-    mandatory = _unique_sorted(
-        [
-            spec.map_floor_kpa,
-            spec.vacuum_full_map_kpa,
-            spec.atm_kpa,
-            max_boost_anchor,
-            overboost,
-        ]
-    )
-    preferred = _unique_sorted(
-        [
-            spec.idle_map_lo,
-            (spec.idle_map_lo + spec.idle_map_hi) / 2.0,
-            spec.idle_map_hi,
-            60.0,
-            80.0,
-        ]
-    )
+    priority = [decel, idle_lo, idle_mid, idle_hi, atm]
+    if boosted:
+        priority.extend([max_boost, overboost])
+    else:
+        priority.append(overboost)
 
-    result = list(mandatory)
-    for value in preferred:
-        if len(result) >= count:
-            break
-        if spec.map_floor_kpa <= value <= overboost and value not in result:
+    result: list[float] = []
+    for value in priority:
+        value = float(round(value))
+        if value not in result:
             result.append(value)
+        if len(result) == count:
+            return sorted(result)
+
+    result = _unique_sorted(result)
+    remaining = count - len(result)
+
+    if remaining > 0:
+        # Allocate most NA resolution between the upper idle boundary and atmosphere.
+        # Keep the lower side sparse: decel + the explicit idle landmarks are enough.
+        upper_start = max(idle_hi, decel)
+        na_span = max(atm - upper_start, 1.0)
+        if boosted:
+            boost_span = max(max_boost - atm, 1.0)
+            # Weight normal drivability more heavily than boost, while ensuring boost
+            # receives useful resolution when present.
+            na_extra = int(round(remaining * na_span / (na_span + 0.65 * boost_span)))
+            na_extra = max(0, min(remaining, na_extra))
+            boost_extra = remaining - na_extra
+        else:
+            na_extra = remaining
+            boost_extra = 0
+
+        na_step = _nice_map_step(na_span, max(na_extra + 2, 2))
+        na_candidates = [
+            v
+            for v in _load_ladder(upper_start, atm, na_step)
+            if upper_start < v < atm and v not in result
+        ]
+        chosen_na = _select_evenly(na_candidates, na_extra)
+        result.extend(chosen_na)
+
+        if boosted and boost_extra > 0:
+            boost_candidates = [
+                v
+                for v in _load_ladder(atm, max_boost, boost_step)
+                if atm < v < max_boost and v not in result
+            ]
+            chosen_boost = _select_evenly(boost_candidates, boost_extra)
+            result.extend(chosen_boost)
+
     result = _unique_sorted(result)
 
-    if len(result) > count:
-        # Keep mandatory values, then retain preferred values nearest the idle/vacuum region.
-        keep = set(mandatory)
-        extras = [v for v in result if v not in keep]
-        extras.sort(key=lambda v: (abs(v - ((spec.idle_map_lo + spec.idle_map_hi) / 2.0)), v))
-        result = _unique_sorted(list(keep) + extras[: max(0, count - len(keep))])
-
-    step = _nice_map_step(overboost, count)
-    ladder = [float(v) for v in range(int(spec.map_floor_kpa), int(overboost) + 1, step)]
-    if float(round(spec.atm_kpa)) not in ladder:
-        ladder.append(float(round(spec.atm_kpa)))
-    ladder = _unique_sorted(ladder)
-
-    while len(result) < count:
+    # If a coarse clean ladder could not satisfy the requested table size, fill only
+    # in the useful region (idle_hi -> overboost), never below idle_map_lo.
+    step = 5
+    candidates = [
+        v
+        for v in _load_ladder(idle_hi, overboost, step)
+        if v not in result and v > idle_hi and v < overboost
+    ]
+    while len(result) < count and candidates:
+        gaps: list[tuple[float, float]] = []
+        for candidate in candidates:
+            lower = max((v for v in result if v < candidate), default=result[0])
+            upper = min((v for v in result if v > candidate), default=result[-1])
+            gaps.append((upper - lower, candidate))
+        _, candidate = max(gaps, key=lambda item: (item[0], -item[1]))
+        result.append(candidate)
         result = _unique_sorted(result)
-        best_candidate = None
-        best_gap = -1.0
-        for candidate in ladder:
-            if candidate in result or candidate <= result[0] or candidate >= result[-1]:
-                continue
-            lower = max(v for v in result if v < candidate)
-            upper = min(v for v in result if v > candidate)
-            gap = upper - lower
-            # Prefer filling the largest current gap; ties favor the lower MAP value.
-            if gap > best_gap or (abs(gap - best_gap) < 1e-9 and (best_candidate is None or candidate < best_candidate)):
-                best_gap = gap
-                best_candidate = candidate
-        if best_candidate is None:
-            # Fall back to a finer clean ladder if necessary.
-            finer = next((s for s in MAP_STEPS if s < step), None)
-            if finer is None:
-                break
-            step = finer
-            ladder = _unique_sorted(
-                [float(v) for v in range(int(spec.map_floor_kpa), int(overboost) + 1, step)]
-                + [spec.atm_kpa]
-            )
-            continue
-        result.append(best_candidate)
+        candidates.remove(candidate)
 
-    result = _unique_sorted(result)
     if len(result) != count:
         raise ValueError(
             f"could not create {count} unique load cells; generated {len(result)}"
         )
-    if float(round(spec.atm_kpa)) not in result:
+    if atm not in result:
         raise AssertionError("atmosphere crossover was lost from load axis")
+
+    below_idle = [value for value in result if value < idle_lo]
+    if len(below_idle) > 1:
+        raise AssertionError("load axis allocated more than one row below idle MAP")
+
     return result
