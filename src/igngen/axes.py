@@ -24,6 +24,7 @@ import math
 from dataclasses import dataclass
 
 from .model import EngineSpec
+from .units import inhg_gauge_to_kpa_abs, kpa_abs_to_inhg_gauge
 
 RPM_FILL_STEP = 50
 KPA_PER_PSI = 6.895
@@ -346,12 +347,14 @@ def load_landmarks_kpa(spec: EngineSpec) -> list[Landmark]:
     atm = spec.atm_kpa
     max_boost_kpa = _max_load_kpa(spec)
     overboost = _overboost_kpa(spec)
-    idle_map = 45.0
+    idle_lo = float(spec.idle_map_lo)
+    idle_hi = float(spec.idle_map_hi)
+    idle_mid = 0.5 * (idle_lo + idle_hi)
     marks = [
         Landmark(20, 100, "deep_vacuum"),
-        Landmark(30, 70, "high_vacuum"),
-        Landmark(idle_map, 90, "idle_map"),
-        Landmark(35, 60, "idle_map_low"),
+        Landmark(idle_lo, 95, "idle_map_lo"),
+        Landmark(idle_mid, 90, "idle_map_mid"),
+        Landmark(idle_hi, 95, "idle_map_hi"),
         Landmark(55, 60, "idle_map_high"),
         Landmark(60, 50, "part_throttle"),
         Landmark(80, 50, "high_part"),
@@ -369,14 +372,44 @@ def load_landmarks_kpa(spec: EngineSpec) -> list[Landmark]:
     return marks
 
 
+
+def _inhg_in_idle_band(kpa_target: float, spec: EngineSpec) -> float:
+    """Pick an integer inHg label whose kPa conversion stays inside idle MAP band."""
+    atm = float(spec.atm_kpa)
+    lo = float(spec.idle_map_lo)
+    hi = float(spec.idle_map_hi)
+    raw = kpa_abs_to_inhg_gauge(kpa_target, atm)
+    candidates: list[float] = []
+    base = int(round(raw))
+    for adj in range(0, 8):
+        for cand in (base - adj, base + adj) if adj else (base,):
+            k = inhg_gauge_to_kpa_abs(float(cand), atm)
+            if lo - 1e-9 <= k <= hi + 1e-9:
+                candidates.append(float(cand))
+        if candidates:
+            # Prefer closest to target kPa
+            return min(candidates, key=lambda c: abs(inhg_gauge_to_kpa_abs(c, atm) - kpa_target))
+    return float(base)
+
+
 def load_landmarks_inhg(spec: EngineSpec) -> list[Landmark]:
+    """inHg gauge landmarks; include idle MAP band so idle-pocket ±° is visible."""
     max_boost = _max_load_inhg(spec)
     overboost = _overboost_inhg(spec)
+    lo_k = float(spec.idle_map_lo)
+    hi_k = float(spec.idle_map_hi)
+    mid_k = 0.5 * (lo_k + hi_k)
+    idle_lo = _inhg_in_idle_band(lo_k, spec)
+    idle_mid = _inhg_in_idle_band(mid_k, spec)
+    idle_hi = _inhg_in_idle_band(hi_k, spec)
     marks = [
         Landmark(-90.0, 80, "deep_vacuum"),
         Landmark(-55.0, 60, "high_vacuum"),
         Landmark(-31.0, 50, "mod_vacuum"),
-        Landmark(-20.0, 70, "idle_ish"),
+        # Idle pocket MAP band (default 30–45 kPa) — integer inHg inside band
+        Landmark(idle_lo, 95, "idle_map_lo"),
+        Landmark(idle_mid, 90, "idle_map_mid"),
+        Landmark(idle_hi, 95, "idle_map_hi"),
         Landmark(-10.0, 50, "light_vacuum"),
         Landmark(-2.5, 70, "near_atm_vac"),
         Landmark(0.0, 100, "atmosphere"),
