@@ -80,3 +80,21 @@ def test_boost_table_layer():
 def test_vacuum_layer_ignores_boost_side():
     spec = _spec()
     assert timing_at(4800, 170, spec, layers="vacuum") == 32
+
+
+def test_na_boost_psi_zero_ignored():
+    """boost_psi=0: ignore boost retard — atm and tip stay on mechanical total."""
+    spec = EngineSpec(
+        base_timing=16,
+        mech_timing_at_peak_torque=34,
+        idle_rpm=670,
+        peak_torque_rpm=5200,
+        vacuum_total_timing=50,
+        boost_psi=0.0,
+        boost_timing_limit=20,
+        atm_kpa=100,
+    )
+    assert timing_at(5200, 100, spec, layers="idle") == 34
+    assert timing_at(5200, 120, spec, layers="idle") == 34
+    row = pressure_row_timings(5200, [100.0, 120.0], spec, include_boost=True)
+    assert row == [34, 34]
