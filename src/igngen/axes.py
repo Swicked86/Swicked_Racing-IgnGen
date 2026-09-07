@@ -140,9 +140,13 @@ def _fill_between(
 
 
 def _pocket_edges(spec: EngineSpec) -> tuple[float, float]:
-    """Idle pocket lower/upper RPM (total width centered on idle)."""
+    """Idle pocket lower/upper RPM.
+
+    ``idle_pocket_width`` is **±RPM from idle** (not total span).
+    e.g. idle 750, width 100 → 650 / 750 / 850.
+    """
     idle = float(spec.idle_rpm)
-    half = max(spec.idle_pocket_width / 2.0, 50.0)
+    half = max(float(spec.idle_pocket_width), 1.0)
     pocket_lo = idle - half
     pocket_hi = idle + half
     if pocket_lo <= 300:
