@@ -1,9 +1,10 @@
-"""Idle pocket: ±bump° on RPM edges at idle MAP (620=+2, 670=0, 720=-2)."""
+"""Idle pocket: ±bump° on axis RPM edges at idle MAP (620=+N, 670=0, 720=-N)."""
 
 from igngen.model import (
     EngineSpec,
     generate_table,
     idle_pocket_correction,
+    idle_pocket_half_rpm,
     timing_at,
 )
 
@@ -28,6 +29,13 @@ def _spec(**kwargs) -> EngineSpec:
     return EngineSpec(**base)
 
 
+def test_half_matches_axis_minimum():
+    # width 50 still yields ±50 half (same as axes._pocket_edges)
+    assert idle_pocket_half_rpm(_spec(idle_pocket_width=50)) == 50.0
+    assert idle_pocket_half_rpm(_spec(idle_pocket_width=100)) == 50.0
+    assert idle_pocket_half_rpm(_spec(idle_pocket_width=200)) == 100.0
+
+
 def test_rpm_edges_plus_minus_bump():
     spec = _spec()
     assert idle_pocket_correction(620, 35, spec) == 2.0
@@ -35,8 +43,18 @@ def test_rpm_edges_plus_minus_bump():
     assert idle_pocket_correction(720, 35, spec) == -2.0
 
 
+def test_narrow_width_still_hits_axis_edges():
+    """Regression: width 50 used to miss 620/720 because half was 25."""
+    spec = _spec(idle_pocket_width=50, idle_pocket_bump=3)
+    assert idle_pocket_correction(620, 35, spec) == 3.0
+    assert idle_pocket_correction(670, 35, spec) == 0.0
+    assert idle_pocket_correction(720, 35, spec) == -3.0
+    assert timing_at(620, 35, spec, layers="idle") == 19
+    assert timing_at(670, 35, spec, layers="idle") == 16
+    assert timing_at(720, 35, spec, layers="idle") == 13
+
+
 def test_timing_matches_user_example():
-    """620→18, 670→16, 720→14 on 16° base with ±2 at idle MAP."""
     spec = _spec()
     assert timing_at(620, 35, spec, layers="idle") == 18
     assert timing_at(670, 35, spec, layers="idle") == 16
@@ -50,14 +68,8 @@ def test_outside_rpm_or_map_zero():
     assert idle_pocket_correction(620, 100, spec) == 0.0
 
 
-def test_custom_stabilization_degrees():
-    spec = _spec(idle_pocket_bump=3)
-    assert idle_pocket_correction(620, 35, spec) == 3.0
-    assert idle_pocket_correction(720, 35, spec) == -3.0
-
-
 def test_idle_table_rpm_cells():
-    spec = _spec()
+    spec = _spec(idle_pocket_bump=3)
     table = generate_table(
         [620, 670, 720],
         [35, 100],
@@ -65,11 +77,7 @@ def test_idle_table_rpm_cells():
         load_unit="kPa",
         layers="idle",
     )
-    # values[rpm][load]
-    assert table.values[0][0] == 18.0
+    assert table.values[0][0] == 19.0
     assert table.values[1][0] == 16.0
-    assert table.values[2][0] == 14.0
-    # outside idle MAP — no pocket
+    assert table.values[2][0] == 13.0
     assert table.values[0][1] == 16.0
-    assert table.values[1][1] == 16.0
-    assert table.values[2][1] == 16.0
