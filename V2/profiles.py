@@ -48,9 +48,9 @@ class EngineParameters:
     atm_kpa: float = 100.0
     map_floor_kpa: float = 20.0
 
-    # Optional explicit idle-pocket targets.  If omitted, V2 defaults to
+    # Optional explicit idle-pocket targets. If omitted, V2 defaults to
     # 10 deg BTDC at target idle, +6 deg on the catch side, -6 deg on the
-    # upper/retard side.  Engine profiles may override any of these.
+    # upper/retard side. Engine profiles may override any of these.
     idle_timing_low: float | None = None
     idle_timing_target: float | None = None
     idle_timing_high: float | None = None
@@ -171,7 +171,6 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
     if "boost_timing_limit" in boost:
         explicit_boost_limit = float(boost.get("boost_timing_limit"))
     elif "boost_retard_max" in boost:
-        # Legacy profiles used this field as a total-timing floor in practice.
         explicit_boost_limit = float(boost.get("boost_retard_max"))
 
     mech_peak = number(
@@ -192,13 +191,11 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
             return None
         return float(section.get(key))
 
-    # V2 prefers idle-pocket configuration in [idle].  Fall back to the
-    # legacy [engine] value so existing profiles remain readable.
-    pocket_width = number(
-        idle,
-        "idle_pocket_width",
-        number(engine, "idle_pocket_width", defaults.idle_pocket_width),
-    )
+    # V2 intentionally does not inherit V1's [engine] idle_pocket_width or
+    # [idle] idle_pocket_bump fields. Those fields used the old symmetric
+    # pocket semantics. V2 uses the explicit fields below and otherwise the
+    # new 100-RPM, 25/75, 10 +/- 6 defaults.
+    pocket_width = number(idle, "idle_pocket_width", defaults.idle_pocket_width)
     pocket_lower_share = number(
         idle,
         "idle_pocket_lower_share",
@@ -209,11 +206,7 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
         "idle_pocket_upper_share",
         defaults.idle_pocket_upper_share,
     )
-    pocket_bump = number(
-        idle,
-        "idle_timing_delta",
-        number(idle, "idle_pocket_bump", defaults.idle_pocket_bump),
-    )
+    pocket_bump = number(idle, "idle_timing_delta", defaults.idle_pocket_bump)
 
     return EngineParameters(
         name=str(profile.get("name", path.stem)),
