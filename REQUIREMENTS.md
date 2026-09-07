@@ -53,9 +53,10 @@ Optional later: compressor efficiency / NA base HP for turbo VE concepts (shared
    - Below peak-torque RPM: retard × mechanical_progress
    - Load cells between atm and max boost → **whole-degree** staircase
 4. **Idle pocket** (localized basin at idle RPM × idle MAP):
+   - Prompt: **Idle pocket (±RPM from idle)** — e.g. 750 ± 100 → landmarks 650 / 750 / 850
    - Typical idle vacuum band **30–45 kPa** abs (where the pocket applies)
-   - One prompt: **Idle stabilization (±°)** — pocket lower RPM **+N°**, idle **0°**,
-     pocket upper RPM **−N°** (default **2**; e.g. 620→18, 670→16, 720→14 on 16° base)
+   - Prompt: **Idle stabilization (±°)** — pocket lower **+N°**, idle **0°**,
+     pocket upper **−N°** (default **2**)
 5. **Soft power loss**: start retarding ~500 RPM before redline — later layer
 6. Atmosphere (**100 kPa** abs / ~0 inHg Alpha gauge) **always** on the load axis as crossover
 7. Normal generated map: **whole degrees**, floor **≥ 0**
