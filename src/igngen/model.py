@@ -311,31 +311,36 @@ def pressure_correction(map_kpa: float, spec: EngineSpec) -> float:
     return pressure_delta(map_kpa, spec)
 
 
+def idle_pocket_half_rpm(spec: EngineSpec) -> float:
+    """Half-width of the idle RPM pocket — matches axes._pocket_edges (min ±50)."""
+    return max(float(spec.idle_pocket_width) / 2.0, 50.0)
+
+
 def idle_pocket_correction(rpm: float, map_kpa: float, spec: EngineSpec) -> float:
     """Localized idle basin: RPM pocket × idle MAP band.
 
     At idle vacuum (default 30–45 kPa): stabilization vs RPM —
-    pocket lower edge +bump°, idle 0°, pocket upper edge −bump°
+    axis pocket lower +bump°, idle 0°, pocket upper −bump°
     (e.g. 620→+2, 670→0, 720→−2 with bump=2). Outside RPM/MAP → 0.
+
+    RPM half-width matches the axis landmark pocket (minimum ±50 RPM).
     """
-    half = max(float(spec.idle_pocket_width) / 2.0, 0.0)
-    if half <= 0:
-        return 0.0
+    half = idle_pocket_half_rpm(spec)
     idle = float(spec.idle_rpm)
-    if abs(rpm - idle) > half:
+    if abs(rpm - idle) > half + 1e-9:
         return 0.0
     lo = float(spec.idle_map_lo)
     hi = float(spec.idle_map_hi)
     if hi < lo or map_kpa < lo or map_kpa > hi:
         return 0.0
     bump = float(getattr(spec, "idle_pocket_bump", 2.0))
-    # −1 at pocket_lo, 0 at idle, +1 at pocket_hi
+    # −1 at pocket_lo, 0 at idle, +1 at pocket_hi (same edges as RPM axis)
     t = (rpm - idle) / half
     return -bump * t
 
 
 def describe_idle_pocket(spec: EngineSpec) -> str:
-    half = spec.idle_pocket_width / 2.0
+    half = idle_pocket_half_rpm(spec)
     bump = float(getattr(spec, "idle_pocket_bump", 2.0))
     lo_rpm = spec.idle_rpm - half
     hi_rpm = spec.idle_rpm + half
@@ -404,7 +409,7 @@ def timing_at(
     elif map_kpa > atm:
         value = max(value, limit)
     in_idle_pocket = (
-        abs(rpm - spec.idle_rpm) <= spec.idle_pocket_width / 2.0 and spec.idle_map_lo <= map_kpa <= spec.idle_map_hi
+        abs(rpm - spec.idle_rpm) <= idle_pocket_half_rpm(spec) and spec.idle_map_lo <= map_kpa <= spec.idle_map_hi
     )
     floor = spec.map_floor if in_idle_pocket else max(spec.map_floor, spec.normal_min)
     if map_kpa > atm:
