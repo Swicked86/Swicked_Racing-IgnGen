@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Swicked Racing IgnGen</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <section class="config-panel panel">
+      <div class="panel-head">
+        <div>
+          <div class="eyebrow">SWICKED RACING</div>
+          <h1>IgnGen Table Generator</h1>
+          <p>Configure the engine and generate an ignition table directly into the host calibration surface.</p>
+        </div>
+        <div class="status-pill" id="statusPill">READY</div>
+      </div>
+
+      <form id="configForm">
+        <div class="toolbar-grid">
+          <label>Engine profile
+            <select id="engine" name="engine"></select>
+          </label>
+          <label>Load cells
+            <input name="load_cells" type="number" min="6" max="64" value="16">
+          </label>
+          <label>RPM cells
+            <input name="rpm_cells" type="number" min="6" max="64" value="20">
+          </label>
+          <button class="generate" type="submit">Generate Table</button>
+        </div>
+
+        <div class="group-grid">
+          <fieldset>
+            <legend>Engine</legend>
+            <div class="fields">
+              <label>Displacement <span>cc</span><input name="displacement_cc" type="number" step="1"></label>
+              <label>Peak horsepower <span>hp</span><input name="peak_hp" type="number" step="0.1"></label>
+              <label>Peak HP RPM <span>rpm</span><input name="peak_hp_rpm" type="number" step="1"></label>
+              <label>Peak torque <span>lb-ft</span><input name="peak_torque_lbft" type="number" step="0.1"></label>
+              <label>Peak torque RPM <span>rpm</span><input name="peak_torque_rpm" type="number" step="1"></label>
+              <label>Redline <span>rpm</span><input name="redline_rpm" type="number" step="1"></label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Mechanical</legend>
+            <div class="fields">
+              <label>Cranking RPM <span>rpm</span><input name="cranking_rpm" type="number" step="1"></label>
+              <label>Cranking timing <span>°BTDC</span><input name="cranking_timing" type="number" step="0.1"></label>
+              <label>Base timing <span>°BTDC</span><input name="base_timing" type="number" step="0.1"></label>
+              <label>Full mechanical <span>°BTDC</span><input name="mech_timing_at_peak_torque" type="number" step="0.1"></label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Vacuum / Boost</legend>
+            <div class="fields">
+              <label>Full-vacuum MAP <span>kPa abs</span><input name="vacuum_full_map_kpa" type="number" step="0.1"></label>
+              <label>Vacuum total <span>°BTDC</span><input name="vacuum_total_timing" type="number" step="0.1"></label>
+              <label>Max boost <span>psi</span><input name="boost_psi" type="number" step="0.1"></label>
+              <label>Boost timing limit <span>°BTDC</span><input name="boost_timing_limit" type="number" step="0.1"></label>
+              <label>Boost retard gain <span>gain</span><input name="boost_retard_gain" type="number" step="0.01"></label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Idle Pocket</legend>
+            <div class="fields">
+              <label>Target idle <span>rpm</span><input name="idle_rpm" type="number" step="1"></label>
+              <label>Total width <span>rpm</span><input name="idle_pocket_width" type="number" step="1"></label>
+              <label>Lower share <span>0–1</span><input name="idle_pocket_lower_share" type="number" step="0.01"></label>
+              <label>Upper share <span>0–1</span><input name="idle_pocket_upper_share" type="number" step="0.01"></label>
+              <label>Target timing <span>°BTDC</span><input name="idle_timing_target" type="number" step="0.1"></label>
+              <label>Timing delta <span>°</span><input name="idle_timing_delta" type="number" step="0.1"></label>
+              <label>Idle MAP low <span>kPa abs</span><input name="idle_map_lo" type="number" step="0.1"></label>
+              <label>Idle MAP high <span>kPa abs</span><input name="idle_map_hi" type="number" step="0.1"></label>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>Limit / Overspeed</legend>
+            <div class="fields">
+              <label>Soft-limit before redline <span>rpm</span><input name="soft_limit_rpm_before_redline" type="number" step="1"></label>
+              <label>Soft-limit retard <span>°</span><input name="soft_limit_retard" type="number" step="0.1"></label>
+              <label>Overspeed after redline <span>rpm</span><input name="overspeed_rpm_after_redline" type="number" step="1"></label>
+            </div>
+          </fieldset>
+        </div>
+      </form>
+      <div class="message" id="message" aria-live="polite"></div>
+    </section>
+
+    <section class="table-panel panel">
+      <div class="table-head">
+        <div>
+          <div class="eyebrow">GENERATED SURFACE</div>
+          <h2>Ignition Table</h2>
+        </div>
+        <div class="table-meta" id="tableMeta">No table generated</div>
+      </div>
+      <div class="table-scroll" id="tableWrap">
+        <div class="empty-state">Choose an engine profile or adjust the defaults, then click <strong>Generate Table</strong>.</div>
+      </div>
+    </section>
+
+    <footer>
+      <span>Ignition table generation by <strong>Swicked Racing IgnGen</strong></span>
+      <a href="https://github.com/Swicked86/Swicked_Racing-IgnGen">Project source</a>
+    </footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
