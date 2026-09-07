@@ -121,7 +121,8 @@ def prompt_engine_spec(
     boost_psi = _ask(
         "Max boost (psi, 0 = NA)", _num_default(d.boost_psi), cast=float
     )
-    if layers in {"boost", "idle", "full"}:
+    # NA: boost retard is ignored in the model — don't ask for a limit
+    if layers in {"boost", "idle", "full"} and float(boost_psi) > 0.0:
         boost_timing_limit = float(
             _ask(
                 "Boost timing retard limit",
