@@ -1,7 +1,7 @@
 """Nonlinear RPM/load axis generation.
 
 RPM columns: low anchors always include the idle **pocket**
-(cranking, pocket lower, idle, pocket upper). Remaining slots split **2:1**:
+(cranking @500, pocket lower, idle, pocket upper). Remaining slots split **2:1**:
   2 — (above idle pocket → peak torque]  (mechanical climb)
   1 — (peak torque → overspeed]          (hold / soft later)
 
@@ -149,8 +149,9 @@ def _pocket_edges(spec: EngineSpec) -> tuple[float, float]:
     half = max(float(spec.idle_pocket_width), 1.0)
     pocket_lo = idle - half
     pocket_hi = idle + half
-    if pocket_lo <= 300:
-        pocket_lo = 300 + max(50.0, half * 0.5)
+    cranking = float(getattr(spec, "cranking_rpm", 500.0))
+    if pocket_lo <= cranking:
+        pocket_lo = cranking + max(50.0, half * 0.5)
     if pocket_hi <= idle:
         pocket_hi = idle + half
     return float(pocket_lo), float(pocket_hi)
@@ -165,7 +166,7 @@ def generate_rpm_axis(spec: EngineSpec, count: int) -> list[float]:
     tq = float(spec.peak_torque_rpm)
     redline = float(spec.redline_rpm)
     overspeed = redline + 1000.0
-    cranking = 300.0
+    cranking = float(getattr(spec, "cranking_rpm", 500.0))
 
     if tq <= pocket_hi + 100:
         pocket_hi = idle + max(50.0, (tq - idle) * 0.1)
