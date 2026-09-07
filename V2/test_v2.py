@@ -75,6 +75,15 @@ def test_load_axis_uses_only_one_row_below_idle_region() -> None:
         assert 100.0 in axis
 
 
+def test_load_axis_does_not_fill_inside_idle_band() -> None:
+    spec = _example().with_overrides(idle_map_lo=50, idle_map_hi=65)
+    axis = generate_load_axis(spec, 16)
+    idle_mid = round((spec.idle_map_lo + spec.idle_map_hi) / 2.0)
+    inside = [point for point in axis if spec.idle_map_lo < point < spec.idle_map_hi]
+    assert inside == [float(idle_mid)]
+    assert len([point for point in axis if point < spec.idle_map_lo]) == 1
+
+
 def test_cammed_idle_map_moves_low_end_of_axis_upward() -> None:
     stockish = _example()
     cammed = stockish.with_overrides(idle_map_lo=50, idle_map_hi=65)
