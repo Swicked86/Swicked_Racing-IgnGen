@@ -34,7 +34,7 @@ class EngineSpec:
     vacuum_total_timing: float = 50.0
     vacuum_full_map_kpa: float = 40.0
     # Later layers (kept for full model)
-    idle_pocket_width: float = 250.0
+    idle_pocket_width: float = 100.0  # ±RPM from idle (not total span)
     # Idle vacuum band (kPa abs) — typical ~30–45; +2° at lo, −2° at hi
     idle_map_lo: float = 30.0
     idle_map_hi: float = 45.0
@@ -157,7 +157,7 @@ def vacuum_advance(map_kpa: float, spec: EngineSpec) -> float:
 
 
 def _pocket_hi_rpm(spec: EngineSpec) -> float:
-    half = max(spec.idle_pocket_width / 2.0, 50.0)
+    half = max(float(spec.idle_pocket_width), 1.0)
     return float(spec.idle_rpm) + half
 
 
@@ -312,8 +312,8 @@ def pressure_correction(map_kpa: float, spec: EngineSpec) -> float:
 
 
 def idle_pocket_half_rpm(spec: EngineSpec) -> float:
-    """Half-width of the idle RPM pocket — matches axes._pocket_edges (min ±50)."""
-    return max(float(spec.idle_pocket_width) / 2.0, 50.0)
+    """±RPM of the idle pocket — matches axes._pocket_edges."""
+    return max(float(spec.idle_pocket_width), 1.0)
 
 
 def idle_pocket_correction(rpm: float, map_kpa: float, spec: EngineSpec) -> float:
@@ -323,7 +323,7 @@ def idle_pocket_correction(rpm: float, map_kpa: float, spec: EngineSpec) -> floa
     axis pocket lower +bump°, idle 0°, pocket upper −bump°
     (e.g. 620→+2, 670→0, 720→−2 with bump=2). Outside RPM/MAP → 0.
 
-    RPM half-width matches the axis landmark pocket (minimum ±50 RPM).
+    ±RPM matches the axis landmark pocket (idle_pocket_width is ± from idle).
     """
     half = idle_pocket_half_rpm(spec)
     idle = float(spec.idle_rpm)
