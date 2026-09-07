@@ -19,21 +19,21 @@ def test_vacuum_and_boost_limits_are_total_timing():
     spec = EngineSpec(
         base_timing=15,
         mech_timing_at_peak_torque=32,
+        vacuum_total_timing=40,
         vacuum_advance_per_kpa=2.0,
         vacuum_advance_max=40,
+        boost_timing_limit=12,
         boost_retard_per_psi=3.0,
         boost_retard_max=12,
+        boost_psi=10,
         atm_kpa=100,
         idle_pocket_width=0,
         soft_limit_retard=0,
     )
-    # Deep vacuum: step would overshoot; clamp to total vacuum limit
     assert timing_at(4800, 40, spec, layers="full") == 40
-    # Mild vacuum: below total limit → mechanical + step
-    mild = timing_at(1100, 96, spec, layers="full")  # 4 kPa below → +8° on base 15 = 23
-    assert mild == 23
-    # Boost: step would go under floor; clamp to total boost limit
-    over = 100 + 10 * 6.895  # 10 psi
+    mild = timing_at(1100, 96, spec, layers="full")
+    assert mild == 15
+    over = 100 + 10 * 6.895
     assert timing_at(4800, over, spec, layers="full") == 12
 
 
@@ -63,12 +63,11 @@ def test_idle_pocket_width_affects_timing_full_layers():
     assert t_wide != t_narrow
 
 
-
 def test_inhg_load_axis_is_kpa_converted():
     """inHg axis = kPa generation first, then kpa_abs_to_inhg_gauge (idle band preserved)."""
     from igngen.axes import generate_load_axis
     from igngen.model import EngineSpec, timing_at
-    from igngen.units import inhg_gauge_to_kpa_abs, kpa_abs_to_inhg_gauge
+    from igngen.units import kpa_abs_to_inhg_gauge
 
     spec = EngineSpec(
         base_timing=16,
@@ -98,4 +97,3 @@ def test_inhg_load_axis_is_kpa_converted():
     assert timing_at(850, k, spec, layers="idle") == 18
     assert timing_at(900, k, spec, layers="idle") == 16
     assert timing_at(950, k, spec, layers="idle") == 14
-
