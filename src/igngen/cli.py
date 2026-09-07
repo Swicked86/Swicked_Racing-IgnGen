@@ -19,7 +19,12 @@ from .model import (
 )
 from .preset_ini import find_preset_ini
 from .presets import PRESETS, get_preset
-from .prompt import prompt_engine_spec, prompt_output_path, prompt_preset
+from .prompt import (
+    prompt_engine_choice,
+    prompt_engine_spec,
+    prompt_output_path,
+    prompt_preset,
+)
 from .table import parse_range
 from .engines import describe_engine, find_engine, list_engines
 
@@ -99,7 +104,7 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument(
         "--engine",
         default=None,
-        help="Engine profile (e.g. D16Z6) — pre-fills prompt defaults (editable)",
+        help="Engine profile (e.g. D16Z6). If omitted interactively, you pick one or new",
     )
     p_new.add_argument(
         "--layers",
@@ -220,6 +225,9 @@ def main(argv: list[str] | None = None) -> int:
                     )
                 print(describe_engine(engine))
                 print()
+            elif interactive and sys.stdin.isatty():
+                # No --engine: pick a profile or start a new blank one
+                engine = prompt_engine_choice()
 
             if args.preset == "none":
                 preset_name = None
