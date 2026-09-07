@@ -28,6 +28,9 @@ class EngineSpec:
     boost_psi: float = 0.0
     # Mechanical curve (configurable)
     base_timing: float = 10.0
+    # Cranking column: low RPM, retarded vs idle base (starter safety)
+    cranking_rpm: float = 500.0
+    cranking_timing: float = 10.0
     mech_timing_at_peak_torque: float = 32.0
     idle_rpm: float = 1100.0
     # Vacuum: absolute total timing at ≤ vacuum_full_map_kpa (fixed 40 kPa)
@@ -70,14 +73,18 @@ def validate_power(spec: EngineSpec) -> list[str]:
 def mechanical_advance(rpm: float, spec: EngineSpec) -> float:
     """Distributor mechanical curve vs RPM (load-independent).
 
-    - At/below idle: base_timing (initial / static)
+    - At/below cranking RPM: ``cranking_timing`` (default 10° — starter-safe)
+    - Above cranking through idle: ``base_timing`` (initial / static)
     - Idle → peak torque RPM: **linear** climb to mech_timing_at_peak_torque
-      (starts advancing right out of idle — not after the idle pocket)
     - Above peak torque: hold that total
     """
+    crank_rpm = float(getattr(spec, "cranking_rpm", 500.0))
+    crank_deg = float(getattr(spec, "cranking_timing", 10.0))
     base = spec.base_timing
     peak = spec.mech_timing_at_peak_torque
     idle = max(spec.idle_rpm, 1.0)
+    if rpm <= crank_rpm + 1e-9:
+        return crank_deg
     if rpm <= idle:
         return base
     if rpm >= spec.peak_torque_rpm:
@@ -274,10 +281,13 @@ def pressure_row_timings(
 
 
 def describe_mechanical_curve(spec: EngineSpec) -> str:
+    crank_rpm = float(getattr(spec, "cranking_rpm", 500.0))
+    crank_deg = float(getattr(spec, "cranking_timing", 10.0))
     return (
-        f"Mechanical: {spec.base_timing:.0f}° at idle "
-        f"({spec.idle_rpm:.0f} RPM) → linear to {spec.mech_timing_at_peak_torque:.0f}° "
-        f"by peak torque ({spec.peak_torque_rpm:.0f} RPM), hold above"
+        f"Mechanical: cranking {crank_deg:.0f}° @{crank_rpm:.0f} RPM; "
+        f"{spec.base_timing:.0f}° at idle ({spec.idle_rpm:.0f} RPM) → linear to "
+        f"{spec.mech_timing_at_peak_torque:.0f}° by peak torque "
+        f"({spec.peak_torque_rpm:.0f} RPM), hold above"
     )
 
 
