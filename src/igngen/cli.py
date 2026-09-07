@@ -100,6 +100,14 @@ def _validate_v2(spec: EngineParameters) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Bare `igngen` is the normal interactive workflow, equivalent to
+    # `igngen new`. Explicit subcommands and global options keep their normal
+    # argparse behavior.
+    if argv is None:
+        argv = sys.argv[1:]
+    if not argv:
+        argv = ["new"]
+
     parser = argparse.ArgumentParser(
         prog="igngen",
         description="Swicked Racing IgnGen — ignition timing table generator",
