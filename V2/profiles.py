@@ -31,17 +31,13 @@ class EngineParameters:
 
     idle_rpm: float = 750.0
 
-    # TOTAL pocket span. Default 100 RPM: 25 RPM below / 75 RPM above idle.
     idle_pocket_width: float = 100.0
     idle_pocket_lower_share: float = 0.25
     idle_pocket_upper_share: float = 0.75
 
-    # Pocket timing is independent of distributor/base timing.
     idle_timing_target: float = 10.0
     idle_timing_delta: float = 6.0
 
-    # Warm-idle MAP operating band. These are calibration values; a camshaft,
-    # intake, exhaust, or idle-speed change can move them substantially.
     idle_map_lo: float = 30.0
     idle_map_hi: float = 45.0
 
@@ -53,17 +49,10 @@ class EngineParameters:
     vacuum_total_timing: float = 50.0
     vacuum_full_map_kpa: float = 40.0
 
-    # Absolute total-timing limit under boost. User enters the timing target,
-    # not a retard amount. Gain scales the mirrored vacuum kPa curve.
-    # 0.60 is the default whenever boost is enabled; for an NA profile this
-    # value is dormant until boost_psi is changed above zero.
-    # >1 = retard arrives sooner, <1 = retard arrives later.
+    # Absolute total-timing limit under boost. Gain scales the mirrored vacuum
+    # kPa curve. The 0.60 default is dormant until boost_psi is above zero.
     boost_timing_limit: float = 20.0
     boost_retard_gain: float = 0.60
-
-    # Legacy/reference-only field retained for older INIs and comparison output.
-    # It is not used by the V2 boost timing calculation.
-    boost_retard_deg_per_psi: float = 2.0
 
     soft_limit_rpm_before_redline: float = 500.0
     soft_limit_retard: float = 10.0
@@ -84,10 +73,7 @@ class EngineParameters:
     @property
     def idle_pocket_lo_rpm(self) -> float:
         lower, _ = self.normalized_idle_shares
-        return max(
-            self.cranking_rpm,
-            self.idle_rpm - self.idle_pocket_width * lower,
-        )
+        return max(self.cranking_rpm, self.idle_rpm - self.idle_pocket_width * lower)
 
     @property
     def idle_pocket_hi_rpm(self) -> float:
@@ -107,13 +93,11 @@ class EngineParameters:
         return self.atm_kpa + max(0.0, self.boost_psi) * KPA_PER_PSI
 
     def derived_idle_targets(self) -> tuple[float, float, float]:
-        """Return catch / target / upper-pocket timing targets."""
         target = float(self.idle_timing_target)
         delta = max(0.0, float(self.idle_timing_delta))
         return target + delta, target, target - delta
 
     def with_overrides(self, **changes: float | str | None) -> "EngineParameters":
-        """Return a temporary profile copy; ``None`` values are ignored."""
         usable = {key: value for key, value in changes.items() if value is not None}
         unknown = set(usable) - set(self.__dataclass_fields__)
         if unknown:
@@ -153,7 +137,6 @@ def list_engine_profiles(search_dirs: list[Path] | None = None) -> list[Path]:
 
 
 def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None = None) -> EngineParameters:
-    """Load an engine profile or return generic defaults for ``other``."""
     if str(path_or_name).strip().lower() in {"other", "custom", "new"}:
         return EngineParameters()
 
@@ -190,24 +173,14 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
     else:
         boost_psi = defaults.boost_psi
 
-    explicit_boost_limit = None
     if "boost_timing_limit" in boost:
-        explicit_boost_limit = float(boost.get("boost_timing_limit"))
+        boost_limit = float(boost.get("boost_timing_limit"))
     elif "boost_retard_max" in boost:
-        explicit_boost_limit = float(boost.get("boost_retard_max"))
+        boost_limit = float(boost.get("boost_retard_max"))
+    else:
+        boost_limit = defaults.boost_timing_limit
 
-    mech_peak = number(
-        mechanical,
-        "mech_timing_at_peak_torque",
-        defaults.mech_timing_at_peak_torque,
-    )
-    retard_rate = number(
-        boost,
-        "boost_retard_deg_per_psi",
-        defaults.boost_retard_deg_per_psi,
-    )
-    if explicit_boost_limit is None:
-        explicit_boost_limit = mech_peak - boost_psi * retard_rate
+    mech_peak = number(mechanical, "mech_timing_at_peak_torque", defaults.mech_timing_at_peak_torque)
 
     return EngineParameters(
         name=str(profile.get("name", path.stem)),
@@ -233,9 +206,8 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
         mech_timing_at_peak_torque=mech_peak,
         vacuum_total_timing=number(vacuum, "vacuum_total_timing", defaults.vacuum_total_timing),
         vacuum_full_map_kpa=number(vacuum, "vacuum_full_map_kpa", defaults.vacuum_full_map_kpa),
-        boost_timing_limit=float(explicit_boost_limit),
+        boost_timing_limit=boost_limit,
         boost_retard_gain=number(boost, "boost_retard_gain", defaults.boost_retard_gain),
-        boost_retard_deg_per_psi=retard_rate,
         soft_limit_rpm_before_redline=number(limiter, "soft_limit_rpm_before_redline", defaults.soft_limit_rpm_before_redline),
         soft_limit_retard=number(limiter, "soft_limit_retard", defaults.soft_limit_retard),
         overspeed_rpm_after_redline=number(limiter, "overspeed_rpm_after_redline", defaults.overspeed_rpm_after_redline),
@@ -256,7 +228,6 @@ def save_engine_profile(
     engine_dir: str | Path = "engines",
     overwrite: bool = False,
 ) -> Path:
-    """Persist the current parameters as a tuner-readable engine INI."""
     destination = Path(path_or_name)
     if destination.suffix.lower() != ".ini" and destination.parent == Path("."):
         destination = Path(engine_dir) / f"{_slug(str(path_or_name))}.ini"
@@ -295,19 +266,14 @@ base_timing = {spec.base_timing:g}
 mech_timing_at_peak_torque = {spec.mech_timing_at_peak_torque:g}
 
 [vacuum]
-; Full-vacuum advance is reached at/below this absolute MAP value.
 vacuum_full_map_kpa = {spec.vacuum_full_map_kpa:g}
 vacuum_total_timing = {spec.vacuum_total_timing:g}
 
 [boost]
 ; Absolute total timing limit. IgnGen calculates the required retard.
 boost_timing_limit = {spec.boost_timing_limit:g}
-; Pressure-domain gain applied to the mirrored vacuum kPa curve.
-; Default 0.60 when boost is enabled; 1.0 would be a literal mirrored kPa rate.
-; Higher gain brings retard in sooner; lower gain brings it in more slowly.
+; Pressure-domain gain applied to the vacuum curve mirrored above atmosphere.
 boost_retard_gain = {spec.boost_retard_gain:g}
-; Legacy/reference-only heuristic; V2 does not use it for timing generation.
-boost_retard_deg_per_psi = {spec.boost_retard_deg_per_psi:g}
 
 [idle]
 idle_pocket_width = {spec.idle_pocket_width:g}
