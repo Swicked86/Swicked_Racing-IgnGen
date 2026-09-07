@@ -21,7 +21,7 @@ from .preset_ini import find_preset_ini
 from .presets import PRESETS, get_preset
 from .prompt import prompt_engine_spec, prompt_output_path, prompt_preset
 from .table import parse_range
-from .vehicles import describe_vehicle, find_vehicle, list_vehicles
+from .engines import describe_engine, find_engine, list_engines
 
 _LAYOUTS = ("swicked", "alpha")
 _EXPORTS = ("swicked", "alpha")
@@ -195,14 +195,14 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command in {"engines", "vehicles"}:
-            paths = list_vehicles()
+            paths = list_engines()
             if not paths:
-                print("No engine profiles found under vehicles/")
+                print("No engine profiles found under engines/")
                 return 0
             for path in paths:
-                v = find_vehicle(path.stem)
+                v = find_engine(path.stem)
                 if v:
-                    print(describe_vehicle(v))
+                    print(describe_engine(v))
                     print(f"  file: {v.path}")
                     print()
             return 0
@@ -210,22 +210,22 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "new":
             interactive = not args.no_prompt and args.model == "research"
             layers = args.layers
-            vehicle = None
+            engine = None
             if getattr(args, "engine", None):
-                vehicle = find_vehicle(args.engine)
-                if vehicle is None:
-                    known = ", ".join(p.stem for p in list_vehicles()) or "(none)"
+                engine = find_engine(args.engine)
+                if engine is None:
+                    known = ", ".join(p.stem for p in list_engines()) or "(none)"
                     raise ValueError(
                         f"unknown engine {args.engine!r}; known: {known}"
                     )
-                print(describe_vehicle(vehicle))
+                print(describe_engine(engine))
                 print()
 
             if args.preset == "none":
                 preset_name = None
             elif args.preset:
                 preset_name = args.preset
-            elif interactive and sys.stdin.isatty() and vehicle is None:
+            elif interactive and sys.stdin.isatty() and engine is None:
                 preset_name = prompt_preset(_DEFAULT_PRESET)
                 if preset_name.strip().lower() in {"none", "no", "-"}:
                     preset_name = None
@@ -262,11 +262,11 @@ def main(argv: list[str] | None = None) -> int:
                     # Engine profile (if any) pre-fills [defaults]; Enter keeps, type to override
                     spec = prompt_engine_spec(
                         layers=layers,
-                        defaults=vehicle.spec if vehicle is not None else None,
+                        defaults=engine.spec if engine is not None else None,
                     )
                     spec = _apply_cli_overrides(spec, args)
-                elif vehicle is not None:
-                    spec = vehicle.spec
+                elif engine is not None:
+                    spec = engine.spec
                     spec = _apply_cli_overrides(spec, args)
                 else:
                     spec = EngineSpec(
@@ -327,7 +327,7 @@ def main(argv: list[str] | None = None) -> int:
                 if args.size:
                     a, b = args.size.lower().replace(" ", "").split("x", 1)
                     rows, cols = int(a), int(b)
-                elif interactive and sys.stdin.isatty() and vehicle is None:
+                elif interactive and sys.stdin.isatty() and engine is None:
                     rows, cols = _ask_table_size()
                 else:
                     rows, cols = 12, 12
@@ -341,7 +341,7 @@ def main(argv: list[str] | None = None) -> int:
             out_path = args.out
             if not out_path:
                 default_out = (
-                    f"map-{vehicle.name.lower()}.csv" if vehicle else "map.csv"
+                    f"map-{engine.name.lower()}.csv" if engine else "map.csv"
                 )
                 if interactive and sys.stdin.isatty():
                     out_path = prompt_output_path(default_out)
@@ -376,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
                     "(load axis is unused for timing in this layer — "
                     "every load row matches the RPM curve)"
                 )
-            veh_note = f", engine={vehicle.name}" if vehicle else ""
+            veh_note = f", engine={engine.name}" if engine else ""
             print(
                 f"Wrote {out_path} ({table.shape[0]}×{table.shape[1]} {table.load_unit}, "
                 f"whole °, layers={layers}{veh_note}, origin={origin}, "
