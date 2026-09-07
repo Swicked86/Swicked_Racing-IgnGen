@@ -86,12 +86,6 @@ def main(argv: list[str] | None = None) -> int:
         type=float,
         help="Pressure-domain boost retard gain: 1=same kPa rate as vacuum, >1 sooner, <1 slower",
     )
-    parser.add_argument(
-        "--boost-retard-deg-per-psi",
-        dest="boost_retard_deg_per_psi",
-        type=float,
-        help="Legacy/reference-only heuristic; V2 timing generation does not use it",
-    )
     parser.add_argument("--atm-kpa", dest="atm_kpa", type=float)
     parser.add_argument("--map-floor-kpa", dest="map_floor_kpa", type=float)
     parser.add_argument("--soft-limit-rpm-before-redline", dest="soft_limit_rpm_before_redline", type=float)
