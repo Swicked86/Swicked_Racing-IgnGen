@@ -37,14 +37,14 @@ def test_vacuum_and_boost_limits_are_total_timing():
     assert timing_at(4800, over, spec, layers="full") == 12
 
 
-def test_swicked_view_bottom_left_origin():
+def test_default_view_bottom_left_origin():
     table = TimingTable(
         rpm=[1000.0, 2000.0],
         load=[40.0, 100.0],
         values=[[30.0, 20.0], [32.0, 18.0]],
         load_unit="kPa",
     )
-    text = table.format_grid(layout="swicked", color=False)
+    text = table.format_grid(layout="default", color=False)
     lines = text.splitlines()
     data = [ln for ln in lines if ln.strip()[:1].isdigit()]
     assert data[0].lstrip().startswith("100")
