@@ -23,8 +23,8 @@ from .prompt import prompt_engine_spec, prompt_output_path, prompt_preset
 from .table import parse_range
 from .engines import describe_engine, find_engine, list_engines
 
-_LAYOUTS = ("default", "alpha", "swicked")  # swicked = alias for default
-_EXPORTS = ("default", "alpha", "swicked")  # swicked = alias for default
+_LAYOUTS = ("default", "alpha")
+_EXPORTS = ("default", "alpha")
 _DEFAULT_PRESET = "base"
 _DEFAULT_LAYERS = "idle"
 
@@ -257,10 +257,6 @@ def main(argv: list[str] | None = None) -> int:
                 export = args.export or "default"
                 load_unit = "kPa"
 
-            if layout == "swicked":
-                layout = "default"
-            if export == "swicked":
-                export = "default"
 
             if args.model == "research":
                 if interactive and sys.stdin.isatty():
