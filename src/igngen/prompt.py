@@ -71,7 +71,7 @@ def prompt_engine_spec(
     )
     idle_pocket_width = float(
         _ask(
-            "Idle pocket width (total RPM span, centered on idle)",
+            "Idle pocket (±RPM from idle)",
             _num_default(d.idle_pocket_width, as_int=True),
             cast=int,
         )
