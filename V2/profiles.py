@@ -54,10 +54,12 @@ class EngineParameters:
     vacuum_full_map_kpa: float = 40.0
 
     # Absolute total-timing limit under boost. User enters the timing target,
-    # not a retard amount. Gain scales the mirrored vacuum kPa curve:
+    # not a retard amount. Gain scales the mirrored vacuum kPa curve.
+    # 0.60 is the default whenever boost is enabled; for an NA profile this
+    # value is dormant until boost_psi is changed above zero.
     # >1 = retard arrives sooner, <1 = retard arrives later.
     boost_timing_limit: float = 20.0
-    boost_retard_gain: float = 1.0
+    boost_retard_gain: float = 0.60
 
     # Legacy/reference-only field retained for older INIs and comparison output.
     # It is not used by the V2 boost timing calculation.
@@ -301,7 +303,8 @@ vacuum_total_timing = {spec.vacuum_total_timing:g}
 ; Absolute total timing limit. IgnGen calculates the required retard.
 boost_timing_limit = {spec.boost_timing_limit:g}
 ; Pressure-domain gain applied to the mirrored vacuum kPa curve.
-; 1.0 = same kPa rate as vacuum; >1 sooner; <1 slower.
+; Default 0.60 when boost is enabled; 1.0 would be a literal mirrored kPa rate.
+; Higher gain brings retard in sooner; lower gain brings it in more slowly.
 boost_retard_gain = {spec.boost_retard_gain:g}
 ; Legacy/reference-only heuristic; V2 does not use it for timing generation.
 boost_retard_deg_per_psi = {spec.boost_retard_deg_per_psi:g}
