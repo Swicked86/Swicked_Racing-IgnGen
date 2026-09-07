@@ -121,7 +121,7 @@ def prompt_engine_spec(
         print("\n— Idle pocket —")
         idle_pocket_bump = float(
             _ask(
-                "Idle stabilization (°)",
+                "Idle stabilization (±° at pocket RPM edges)",
                 _num_default(idle_pocket_bump, as_int=True),
                 cast=int,
             )
