@@ -1,6 +1,6 @@
 """Ignition surface model from Swicked Racing research notes.
 
-Build in layers. Current review: mechanical + vacuum + boost (fan from 100 kPa).
+Build in layers. Current review: idle pocket (±2° across idle MAP 30–45 kPa).
 Boost / idle pocket / soft limit are staged next.
 """
 
@@ -14,7 +14,7 @@ from .units import inhg_gauge_to_kpa_abs
 
 KPA_PER_PSI = 6.895
 
-LayerName = Literal["mechanical", "vacuum", "boost", "full"]
+LayerName = Literal["mechanical", "vacuum", "boost", "idle", "full"]
 
 
 @dataclass
@@ -35,6 +35,10 @@ class EngineSpec:
     vacuum_full_map_kpa: float = 40.0
     # Later layers (kept for full model)
     idle_pocket_width: float = 250.0
+    # Idle vacuum band (kPa abs) — typical ~30–45; +2° at lo, −2° at hi
+    idle_map_lo: float = 30.0
+    idle_map_hi: float = 45.0
+    idle_pocket_bump: float = 2.0  # degrees at bottom / top of MAP band
     soft_limit_rpm_before_redline: float = 500.0
     soft_limit_retard: float = 10.0
     vacuum_advance_per_kpa: float = 0.35  # legacy
@@ -308,13 +312,33 @@ def pressure_correction(map_kpa: float, spec: EngineSpec) -> float:
 
 
 def idle_pocket_correction(rpm: float, map_kpa: float, spec: EngineSpec) -> float:
-    half = spec.idle_pocket_width / 2.0
+    """Localized idle basin: RPM pocket × idle MAP band.
+
+    Typical idle vacuum ~30–45 kPa abs. Bottom of band +bump°, top −bump°
+    (default ±2°). Outside the RPM pocket or MAP band → 0.
+    """
+    half = max(float(spec.idle_pocket_width) / 2.0, 0.0)
     if half <= 0 or abs(rpm - spec.idle_rpm) > half:
         return 0.0
-    if map_kpa > 60.0:
+    lo = float(spec.idle_map_lo)
+    hi = float(spec.idle_map_hi)
+    if hi <= lo:
         return 0.0
-    delta_rpm = rpm - spec.idle_rpm
-    return -4.0 * (delta_rpm / half)
+    if map_kpa < lo or map_kpa > hi:
+        return 0.0
+    bump = float(getattr(spec, "idle_pocket_bump", 2.0))
+    t = (map_kpa - lo) / (hi - lo)  # 0 at bottom, 1 at top
+    return bump * (1.0 - t) + (-bump) * t
+
+
+def describe_idle_pocket(spec: EngineSpec) -> str:
+    half = spec.idle_pocket_width / 2.0
+    bump = float(getattr(spec, "idle_pocket_bump", 2.0))
+    return (
+        f"Idle pocket: {spec.idle_rpm:.0f} ±{half:.0f} RPM × "
+        f"{spec.idle_map_lo:.0f}–{spec.idle_map_hi:.0f} kPa; "
+        f"+{bump:.0f}° at {spec.idle_map_lo:.0f} kPa → −{bump:.0f}° at {spec.idle_map_hi:.0f} kPa"
+    )
 
 
 def soft_limit_correction(rpm: float, spec: EngineSpec) -> float:
@@ -360,10 +384,14 @@ def timing_at(
             value = mech + (low - mech) * t
         return int(round(max(0.0, value)))
 
-    # full — boost layer + idle pocket / soft (staged extras)
-    base = float(timing_at(rpm, map_kpa, spec, layers="boost"))
-    value = base + idle_pocket_correction(rpm, map_kpa, spec)
-    value += soft_limit_correction(rpm, spec)
+    if layers == "idle":
+        base = float(timing_at(rpm, map_kpa, spec, layers="boost"))
+        value = base + idle_pocket_correction(rpm, map_kpa, spec)
+        return int(round(max(0.0, value)))
+
+    # full — idle layer + soft redline (staged)
+    base = float(timing_at(rpm, map_kpa, spec, layers="idle"))
+    value = base + soft_limit_correction(rpm, spec)
     atm = spec.atm_kpa
     limit = float(getattr(spec, "boost_timing_limit", spec.boost_retard_max))
     if map_kpa < atm:
@@ -371,7 +399,7 @@ def timing_at(
     elif map_kpa > atm:
         value = max(value, limit)
     in_idle_pocket = (
-        abs(rpm - spec.idle_rpm) <= spec.idle_pocket_width / 2.0 and map_kpa <= 60.0
+        abs(rpm - spec.idle_rpm) <= spec.idle_pocket_width / 2.0 and spec.idle_map_lo <= map_kpa <= spec.idle_map_hi
     )
     floor = spec.map_floor if in_idle_pocket else max(spec.map_floor, spec.normal_min)
     if map_kpa > atm:
@@ -407,6 +435,13 @@ def generate_table(
             values.append([float(v) for v in row_i])
         elif layers == "boost":
             row_i = pressure_row_timings(r, maps, spec, include_boost=True)
+            values.append([float(v) for v in row_i])
+        elif layers == "idle":
+            row_i = pressure_row_timings(r, maps, spec, include_boost=True)
+            row_i = [
+                int(round(v + idle_pocket_correction(r, maps[j], spec)))
+                for j, v in enumerate(row_i)
+            ]
             values.append([float(v) for v in row_i])
         else:
             row: list[float] = []
