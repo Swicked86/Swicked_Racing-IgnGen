@@ -26,8 +26,9 @@ class AxisPreset:
 ALPHA = AxisPreset(
     name="alpha",
     description=(
-        "Alpha (ALPHAlink) High Cam grid: 20×16, Load in inHg. "
-        "Map origin is top-left (RPM down, load right)."
+        "Alpha view: generated 20×16 axes from the engine, Load in inHg gauge. "
+        "Map origin is top-left (RPM down, load right). "
+        "Fixed High Cam breakpoints remain as shape fallback only."
     ),
     rpm=(
         0,
