@@ -277,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
                         peak_torque_rpm=float(args.peak_torque_rpm or 4800),
                         redline_rpm=float(args.redline or 9300),
                         boost_psi=float(
-                            args.boost_psi if args.boost_psi is not None else 7
+                            args.boost_psi if args.boost_psi is not None else 0
                         ),
                         base_timing=float(args.base_timing or 10),
                         mech_timing_at_peak_torque=float(
