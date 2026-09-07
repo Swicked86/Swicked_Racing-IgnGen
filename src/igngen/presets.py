@@ -14,10 +14,10 @@ class AxisPreset:
     load_unit: str
     # Visual / export origin for this preset
     # alpha: top-left (RPM↓ Load→) — matches ALPHAlink screen
-    # base:  bottom-left (RPM→ Load↑) — Swicked research default
+    # base:  bottom-left (RPM→ Load↑) — default research view
     origin: str = "bottom_left"  # "top_left" | "bottom_left"
-    default_layout: str = "swicked"  # "alpha" | "swicked"
-    default_export: str = "swicked"
+    default_layout: str = "default"  # "default" | "alpha"
+    default_export: str = "default"
 
 
 # Alpha / ALPHAlink High Cam Ignition layout (20×16).
@@ -75,13 +75,13 @@ ALPHA = AxisPreset(
     default_export="alpha",
 )
 
-# Base / Swicked research grid. MAP in kPa absolute; 100 = atmosphere crossover.
+# Base / default research grid. MAP in kPa absolute; 100 = atmosphere crossover.
 # Origin is BOTTOM-LEFT (RPM right, load up).
 BASE = AxisPreset(
     name="base",
     description=(
         "Base Swicked grid: 16×12 MAP(kPa)×RPM-style axes with atmosphere at 100. "
-        "Map origin is top-left (RPM down, load right) — ALPHAlink-style view."
+        "Map origin is bottom-left (RPM right, load up)."
     ),
     rpm=(
         400,
@@ -116,9 +116,9 @@ BASE = AxisPreset(
         140,
     ),
     load_unit="kPa",
-    origin="top_left",
-    default_layout="alpha",
-    default_export="alpha",
+    origin="bottom_left",
+    default_layout="default",
+    default_export="default",
 )
 
 PRESETS: dict[str, AxisPreset] = {
