@@ -53,7 +53,14 @@ class EngineParameters:
     vacuum_total_timing: float = 50.0
     vacuum_full_map_kpa: float = 40.0
 
+    # Absolute total-timing limit under boost. User enters the timing target,
+    # not a retard amount. Gain scales the mirrored vacuum kPa curve:
+    # >1 = retard arrives sooner, <1 = retard arrives later.
     boost_timing_limit: float = 20.0
+    boost_retard_gain: float = 1.0
+
+    # Legacy/reference-only field retained for older INIs and comparison output.
+    # It is not used by the V2 boost timing calculation.
     boost_retard_deg_per_psi: float = 2.0
 
     soft_limit_rpm_before_redline: float = 500.0
@@ -200,9 +207,6 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
     if explicit_boost_limit is None:
         explicit_boost_limit = mech_peak - boost_psi * retard_rate
 
-    # V2 pocket settings live in [idle]. Legacy V1's [engine]
-    # idle_pocket_width was +/-RPM, so it is intentionally not imported as a
-    # V2 total-width value.
     return EngineParameters(
         name=str(profile.get("name", path.stem)),
         description=str(profile.get("description", path.stem)),
@@ -215,15 +219,9 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
         boost_psi=boost_psi,
         idle_rpm=number(engine, "idle_rpm", defaults.idle_rpm),
         idle_pocket_width=number(idle, "idle_pocket_width", defaults.idle_pocket_width),
-        idle_pocket_lower_share=number(
-            idle, "idle_pocket_lower_share", defaults.idle_pocket_lower_share
-        ),
-        idle_pocket_upper_share=number(
-            idle, "idle_pocket_upper_share", defaults.idle_pocket_upper_share
-        ),
-        idle_timing_target=number(
-            idle, "idle_timing_target", defaults.idle_timing_target
-        ),
+        idle_pocket_lower_share=number(idle, "idle_pocket_lower_share", defaults.idle_pocket_lower_share),
+        idle_pocket_upper_share=number(idle, "idle_pocket_upper_share", defaults.idle_pocket_upper_share),
+        idle_timing_target=number(idle, "idle_timing_target", defaults.idle_timing_target),
         idle_timing_delta=number(idle, "idle_timing_delta", defaults.idle_timing_delta),
         idle_map_lo=number(idle, "idle_map_lo", defaults.idle_map_lo),
         idle_map_hi=number(idle, "idle_map_hi", defaults.idle_map_hi),
@@ -234,18 +232,11 @@ def load_engine_profile(path_or_name: str | Path, search_dirs: list[Path] | None
         vacuum_total_timing=number(vacuum, "vacuum_total_timing", defaults.vacuum_total_timing),
         vacuum_full_map_kpa=number(vacuum, "vacuum_full_map_kpa", defaults.vacuum_full_map_kpa),
         boost_timing_limit=float(explicit_boost_limit),
+        boost_retard_gain=number(boost, "boost_retard_gain", defaults.boost_retard_gain),
         boost_retard_deg_per_psi=retard_rate,
-        soft_limit_rpm_before_redline=number(
-            limiter,
-            "soft_limit_rpm_before_redline",
-            defaults.soft_limit_rpm_before_redline,
-        ),
+        soft_limit_rpm_before_redline=number(limiter, "soft_limit_rpm_before_redline", defaults.soft_limit_rpm_before_redline),
         soft_limit_retard=number(limiter, "soft_limit_retard", defaults.soft_limit_retard),
-        overspeed_rpm_after_redline=number(
-            limiter,
-            "overspeed_rpm_after_redline",
-            defaults.overspeed_rpm_after_redline,
-        ),
+        overspeed_rpm_after_redline=number(limiter, "overspeed_rpm_after_redline", defaults.overspeed_rpm_after_redline),
         atm_kpa=number(engine, "atm_kpa", defaults.atm_kpa),
         map_floor_kpa=number(engine, "map_floor_kpa", defaults.map_floor_kpa),
     )
@@ -296,7 +287,6 @@ atm_kpa = {spec.atm_kpa:g}
 map_floor_kpa = {spec.map_floor_kpa:g}
 
 [mechanical]
-; 500 RPM is the normal V2 running/synchronized ignition handoff anchor.
 cranking_rpm = {spec.cranking_rpm:g}
 cranking_timing = {spec.cranking_timing:g}
 base_timing = {spec.base_timing:g}
@@ -308,24 +298,20 @@ vacuum_full_map_kpa = {spec.vacuum_full_map_kpa:g}
 vacuum_total_timing = {spec.vacuum_total_timing:g}
 
 [boost]
-; Explicit full-boost timing target. The 2 deg/psi value is only a heuristic.
+; Absolute total timing limit. IgnGen calculates the required retard.
 boost_timing_limit = {spec.boost_timing_limit:g}
+; Pressure-domain gain applied to the mirrored vacuum kPa curve.
+; 1.0 = same kPa rate as vacuum; >1 sooner; <1 slower.
+boost_retard_gain = {spec.boost_retard_gain:g}
+; Legacy/reference-only heuristic; V2 does not use it for timing generation.
 boost_retard_deg_per_psi = {spec.boost_retard_deg_per_psi:g}
 
 [idle]
-; Idle pocket width is TOTAL RPM span, not +/-RPM.
-; Default 25/75 split = short catch region below target, longer torque-removal
-; region above target.
 idle_pocket_width = {spec.idle_pocket_width:g}
 idle_pocket_lower_share = {lower_share:g}
 idle_pocket_upper_share = {upper_share:g}
-
-; Pocket timing is target +/- delta and is independent of base timing.
 idle_timing_target = {spec.idle_timing_target:g}
 idle_timing_delta = {spec.idle_timing_delta:g}
-
-; Warm-idle MAP band in kPa absolute. Camshaft/intake/exhaust changes can move
-; idle vacuum substantially; measure the engine and edit these as needed.
 idle_map_lo = {spec.idle_map_lo:g}
 idle_map_hi = {spec.idle_map_hi:g}
 
