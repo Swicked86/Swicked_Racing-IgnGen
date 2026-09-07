@@ -24,10 +24,10 @@ def test_d16z6_vehicle_loads():
     assert s.peak_torque_rpm == 5200
     assert s.redline_rpm == 7200
     assert s.idle_rpm == 670
-    assert s.idle_pocket_width == 100
+    assert s.idle_pocket_width == 50
     assert s.base_timing == 16
     assert s.mech_timing_at_peak_torque == 34
-    assert abs(s.boost_psi - 10.4) < 0.15
+    assert s.boost_psi == 0.0
 
 
 def test_d16z6_rpm_axis_hits_idle_pocket_and_peaks():
@@ -50,9 +50,9 @@ def test_d16z6_fillers_are_multiples_of_50():
     axis = generate_rpm_axis(s, 16)
     specified = {
         300.0,
-        float(s.idle_rpm - s.idle_pocket_width / 2),
+        float(s.idle_rpm - s.idle_pocket_width),
         float(s.idle_rpm),
-        float(s.idle_rpm + s.idle_pocket_width / 2),
+        float(s.idle_rpm + s.idle_pocket_width),
         float(s.peak_torque_rpm),
         float(s.redline_rpm),
         float(s.redline_rpm + 1000),
@@ -80,14 +80,17 @@ def test_overboost_follows_profile_max_not_vehicle_name():
     assert _overboost_kpa(s2) == 160.0
 
 
-def test_d16z6_load_axis_max_boost_plus_one_overboost():
+def test_d16z6_load_axis_na_plus_one_overboost():
+    """Stock NA (boost_psi=0): max ≈ atm+10 kPa, overboost one logical step past."""
     repo = Path(__file__).resolve().parents[1]
     v = load_vehicle(repo / "vehicles" / "d16z6.ini")
+    assert v.spec.boost_psi == 0.0
     max_map = _max_load_kpa(v.spec)
     over = _overboost_kpa(v.spec)
     load = generate_load_axis(v.spec, 12, unit="kPa")
     assert len(load) == 12
+    assert abs(max_map - 110.0) < 1e-6
     assert any(abs(x - max_map) < 1.5 for x in load)
-    assert max(load) == over == 200.0
+    assert max(load) == over == 140.0
     assert over > max_map
     assert 100 in load or any(abs(x - 100) < 1 for x in load)
