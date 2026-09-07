@@ -5,48 +5,48 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .axes import describe_rpm_axis, generate_load_axis, generate_rpm_axis
 from .generate import generate_baseline
 from .io_files import load_table, save_table
-from .model import (
-    EngineSpec,
-    describe_mechanical_curve,
-    describe_boost_curve,
-    describe_idle_pocket,
-    describe_vacuum_curve,
-    generate_table,
-    validate_power,
-)
 from .preset_ini import find_preset_ini
 from .presets import PRESETS, get_preset
-from .prompt import (
-    prompt_engine_choice,
-    prompt_engine_spec,
-    prompt_output_path,
-    prompt_preset,
+from .prompt_v2 import (
+    prompt_engine_choice_v2,
+    prompt_export_v2,
+    prompt_layout_v2,
+    prompt_output_path_v2,
+    prompt_preset_v2,
+    prompt_review_engine_v2,
 )
 from .table import parse_range
-from .engines import describe_engine, find_engine, list_engines
+from .v2_engine import (
+    EngineParameters,
+    build_table,
+    describe_spec,
+    generate_load_axis,
+    generate_rpm_axis,
+    list_engine_profiles,
+    load_engine_profile,
+)
 
 _LAYOUTS = ("default", "alpha")
 _EXPORTS = ("default", "alpha")
 _DEFAULT_PRESET = "base"
-_DEFAULT_LAYERS = "idle"
 
 
 def _ask_table_size() -> tuple[int, int]:
-    print("Table size (no preset) — examples: 8x8, 12x12, 12x24")
+    print("\n— Select table size —")
+    print("Examples: 8x8, 12x12, 16x20 (load rows × RPM columns)")
     while True:
-        raw = input("Size [rows x cols, default 12x12]: ").strip() or "12x12"
+        raw = input("Size [12x12]: ").strip() or "12x12"
         raw = raw.lower().replace(" ", "")
         if "x" not in raw:
-            print("  use like 12x12")
+            print("  use rowsxcols, for example 16x20")
             continue
         a, b = raw.split("x", 1)
         try:
             rows, cols = int(a), int(b)
         except ValueError:
-            print("  enter integers")
+            print("  enter integer dimensions")
             continue
         if rows < 2 or cols < 2:
             print("  need at least 2x2")
@@ -54,36 +54,49 @@ def _ask_table_size() -> tuple[int, int]:
         return rows, cols
 
 
-def _apply_cli_overrides(spec: EngineSpec, args: argparse.Namespace) -> EngineSpec:
-    if args.displacement is not None:
-        spec.displacement_cc = float(args.displacement)
-    if args.peak_hp is not None:
-        spec.peak_hp = float(args.peak_hp)
-    if args.peak_hp_rpm is not None:
-        spec.peak_hp_rpm = float(args.peak_hp_rpm)
-    if args.peak_torque is not None:
-        spec.peak_torque_lbft = float(args.peak_torque)
-    if args.peak_torque_rpm is not None:
-        spec.peak_torque_rpm = float(args.peak_torque_rpm)
-    if args.redline is not None:
-        spec.redline_rpm = float(args.redline)
-    if args.boost_psi is not None:
-        spec.boost_psi = float(args.boost_psi)
-    if args.base_timing is not None:
-        spec.base_timing = float(args.base_timing)
-    if args.mech_at_peak_torque is not None:
-        spec.mech_timing_at_peak_torque = float(args.mech_at_peak_torque)
-    if args.idle_rpm is not None:
-        spec.idle_rpm = float(args.idle_rpm)
-    if getattr(args, "vacuum_total", None) is not None:
-        spec.vacuum_total_timing = float(args.vacuum_total)
-        spec.vacuum_advance_max = float(args.vacuum_total)
-    if getattr(args, "boost_limit", None) is not None:
-        spec.boost_timing_limit = float(args.boost_limit)
-        spec.boost_retard_max = float(args.boost_limit)
-    if getattr(args, "idle_bump", None) is not None:
-        spec.idle_pocket_bump = float(args.idle_bump)
-    return spec
+def _apply_v2_overrides(spec: EngineParameters, args: argparse.Namespace) -> EngineParameters:
+    mapping = {
+        "displacement_cc": args.displacement,
+        "peak_hp": args.peak_hp,
+        "peak_hp_rpm": args.peak_hp_rpm,
+        "peak_torque_lbft": args.peak_torque,
+        "peak_torque_rpm": args.peak_torque_rpm,
+        "redline_rpm": args.redline,
+        "boost_psi": args.boost_psi,
+        "base_timing": args.base_timing,
+        "mech_timing_at_peak_torque": args.mech_at_peak_torque,
+        "idle_rpm": args.idle_rpm,
+        "idle_pocket_width": args.idle_pocket_width,
+        "idle_pocket_lower_share": args.idle_pocket_lower_share,
+        "idle_pocket_upper_share": args.idle_pocket_upper_share,
+        "idle_timing_target": args.idle_timing_target,
+        "idle_timing_delta": args.idle_timing_delta,
+        "idle_map_lo": args.idle_map_lo,
+        "idle_map_hi": args.idle_map_hi,
+        "cranking_rpm": args.cranking_rpm,
+        "cranking_timing": args.cranking_timing,
+        "vacuum_total_timing": args.vacuum_total,
+        "vacuum_full_map_kpa": args.vacuum_full_map,
+        "boost_timing_limit": args.boost_limit,
+        "boost_retard_gain": args.boost_retard_gain,
+        "soft_limit_rpm_before_redline": args.soft_limit_before_redline,
+        "soft_limit_retard": args.soft_limit_retard,
+        "overspeed_rpm_after_redline": args.overspeed_after_redline,
+    }
+    return spec.with_overrides(**mapping)
+
+
+def _validate_v2(spec: EngineParameters) -> None:
+    if spec.idle_map_hi <= spec.idle_map_lo:
+        raise ValueError("idle_map_hi must be greater than idle_map_lo")
+    if spec.idle_pocket_width <= 0:
+        raise ValueError("idle pocket width must be greater than zero")
+    if spec.redline_rpm <= spec.idle_rpm:
+        raise ValueError("redline RPM must be greater than idle RPM")
+    if spec.boost_retard_gain < 0:
+        raise ValueError("boost retard gain must be >= 0")
+    if spec.vacuum_full_map_kpa >= spec.atm_kpa:
+        raise ValueError("full-vacuum MAP must be below atmospheric MAP")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -94,64 +107,56 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"igngen {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_new = sub.add_parser("new", help="Generate a timing table (prompts for engine inputs)")
+    p_new = sub.add_parser("new", help="Generate a timing table")
     p_new.add_argument(
         "--preset",
         choices=sorted({p.name for p in PRESETS.values()}) + ["none"],
-        default=_DEFAULT_PRESET,
-        help=f"Preset name (default: {_DEFAULT_PRESET}), or 'none' to choose table size",
-    )
-    p_new.add_argument(
-        "--engine",
         default=None,
-        help="Engine profile (e.g. D16Z6). If omitted interactively, you pick one or new",
+        help="Axis/table preset. Interactive mode asks when omitted.",
     )
-    p_new.add_argument(
-        "--layers",
-        choices=("mechanical", "vacuum", "boost", "idle", "full"),
-        default=_DEFAULT_LAYERS,
-        help="Timing layers (default: idle — boost + idle pocket)",
-    )
-    p_new.add_argument("--rpm", help="RPM start:stop:step (overrides generated/fixed axes)")
-    p_new.add_argument("--load", help="Load start:stop:step (overrides generated/fixed axes)")
+    p_new.add_argument("--engine", default=None, help="Engine profile, e.g. D16Z6")
+    p_new.add_argument("--rpm", help="Manual RPM axis start:stop:step")
+    p_new.add_argument("--load", help="Manual MAP axis start:stop:step (kPa absolute)")
     p_new.add_argument("--model", choices=("research", "simple"), default="research")
     p_new.add_argument("--idle", type=float, default=12.0)
     p_new.add_argument("--cruise", type=float, default=28.0)
     p_new.add_argument("--wot", type=float, default=18.0)
-    p_new.add_argument("--base-timing", type=int, default=None)
-    p_new.add_argument("--mech-at-peak-torque", type=int, default=None)
-    p_new.add_argument("--idle-rpm", type=int, default=None)
-    p_new.add_argument(
-        "--vacuum-total",
-        type=int,
-        default=None,
-        help="Total timing ° at full vacuum (≤40 kPa)",
-    )
-    p_new.add_argument(
-        "--boost-limit",
-        type=int,
-        default=None,
-        help="Total timing ° minimum at full boost",
-    )
-    p_new.add_argument(
-        "--idle-bump",
-        type=int,
-        default=None,
-        help="Idle pocket ±° at idle MAP band (bottom +N / top −N)",
-    )
-    p_new.add_argument("--peak-torque-rpm", type=int, default=None)
-    p_new.add_argument("--peak-hp", type=float, default=None)
-    p_new.add_argument("--peak-hp-rpm", type=int, default=None)
-    p_new.add_argument("--peak-torque", type=float, default=None)
-    p_new.add_argument("--displacement", type=int, default=None)
-    p_new.add_argument("--redline", type=int, default=None)
-    p_new.add_argument("--boost-psi", type=float, default=None)
+
+    # V2 engine/calibration overrides. In interactive mode these are also
+    # available in the Review / edit engine defaults step.
+    p_new.add_argument("--displacement", type=float)
+    p_new.add_argument("--peak-hp", type=float)
+    p_new.add_argument("--peak-hp-rpm", type=float)
+    p_new.add_argument("--peak-torque", type=float)
+    p_new.add_argument("--peak-torque-rpm", type=float)
+    p_new.add_argument("--redline", type=float)
+    p_new.add_argument("--boost-psi", type=float)
+    p_new.add_argument("--base-timing", type=float)
+    p_new.add_argument("--mech-at-peak-torque", type=float)
+    p_new.add_argument("--idle-rpm", type=float)
+    p_new.add_argument("--idle-pocket-width", type=float)
+    p_new.add_argument("--idle-pocket-lower-share", type=float)
+    p_new.add_argument("--idle-pocket-upper-share", type=float)
+    p_new.add_argument("--idle-timing-target", type=float)
+    p_new.add_argument("--idle-timing-delta", type=float)
+    p_new.add_argument("--idle-map-lo", type=float)
+    p_new.add_argument("--idle-map-hi", type=float)
+    p_new.add_argument("--cranking-rpm", type=float)
+    p_new.add_argument("--cranking-timing", type=float)
+    p_new.add_argument("--vacuum-total", type=float)
+    p_new.add_argument("--vacuum-full-map", type=float)
+    p_new.add_argument("--boost-limit", type=float, help="Absolute total boost timing limit")
+    p_new.add_argument("--boost-retard-gain", type=float)
+    p_new.add_argument("--soft-limit-before-redline", type=float)
+    p_new.add_argument("--soft-limit-retard", type=float)
+    p_new.add_argument("--overspeed-after-redline", type=float)
+
     p_new.add_argument("--out", "-o", default=None)
     p_new.add_argument("--show", action="store_true")
     p_new.add_argument("--no-prompt", action="store_true")
     p_new.add_argument("--layout", choices=_LAYOUTS, default=None)
     p_new.add_argument("--export", choices=_EXPORTS, default=None)
-    p_new.add_argument("--size", help="Table size when no preset, e.g. 12x12 (rows x cols)")
+    p_new.add_argument("--size", help="Table size without preset, rowsxcols, e.g. 16x20")
 
     p_show = sub.add_parser("show", help="Print a timing table heatmap")
     p_show.add_argument("path")
@@ -190,238 +195,164 @@ def main(argv: list[str] | None = None) -> int:
                 if preset.name in seen:
                     continue
                 seen.add(preset.name)
-                ini = find_preset_ini(preset.name, search_dirs=[Path.cwd() / "presets"])
-                ini_note = f"  ini={ini.path}" if ini else "  ini=(missing)"
                 print(f"{preset.name}: {preset.description}")
-                print(
-                    f"  shape: {len(preset.rpm)}×{len(preset.load)}  "
-                    f"load_unit={preset.load_unit}  origin={preset.origin}{ini_note}"
-                )
+                print(f"  nominal shape: {len(preset.load)} load × {len(preset.rpm)} RPM")
             return 0
 
         if args.command in {"engines", "vehicles"}:
-            paths = list_engines()
-            if not paths:
-                print("No engine profiles found under engines/")
-                return 0
-            for path in paths:
-                v = find_engine(path.stem)
-                if v:
-                    print(describe_engine(v))
-                    print(f"  file: {v.path}")
-                    print()
+            for path in list_engine_profiles():
+                spec = load_engine_profile(path)
+                print(describe_spec(spec))
+                print(f"  file: {path}\n")
             return 0
 
         if args.command == "new":
-            interactive = not args.no_prompt and args.model == "research"
-            layers = args.layers
-            engine = None
-            if getattr(args, "engine", None):
-                engine = find_engine(args.engine)
-                if engine is None:
-                    known = ", ".join(p.stem for p in list_engines()) or "(none)"
-                    raise ValueError(
-                        f"unknown engine {args.engine!r}; known: {known}"
-                    )
-                print(describe_engine(engine))
+            interactive = not args.no_prompt and sys.stdin.isatty()
+
+            if args.model == "simple":
+                preset_name = args.preset or _DEFAULT_PRESET
+                preset = get_preset(preset_name) if preset_name != "none" else None
+                if args.rpm and args.load:
+                    rpm = parse_range(args.rpm)
+                    load = parse_range(args.load)
+                elif preset:
+                    rpm, load = list(preset.rpm), list(preset.load)
+                else:
+                    rows, cols = _ask_table_size() if interactive else (12, 12)
+                    rpm = [float(i * 500) for i in range(cols)]
+                    load = [float(i * 10) for i in range(rows)]
+                table = generate_baseline(rpm, load, idle=args.idle, cruise=args.cruise, wot=args.wot)
+                out_path = args.out or "map.csv"
+                save_table(table, out_path, export=args.export or "default")
+                print(f"Wrote {out_path}")
+                if args.show or interactive:
+                    print(table.format_grid(layout=args.layout or "default", color=True))
+                return 0
+
+            # 1. Select engine.
+            if args.engine:
+                spec = load_engine_profile(args.engine)
+                print(describe_spec(spec))
                 print()
-            elif interactive and sys.stdin.isatty():
-                # No --engine: pick a profile or start a new blank one
-                engine = prompt_engine_choice()
-
-            if args.preset == "none":
-                preset_name = None
-            elif args.preset:
-                preset_name = args.preset
-            elif interactive and sys.stdin.isatty() and engine is None:
-                preset_name = prompt_preset(_DEFAULT_PRESET)
-                if preset_name.strip().lower() in {"none", "no", "-"}:
-                    preset_name = None
+            elif interactive:
+                spec = prompt_engine_choice_v2()
             else:
-                preset_name = _DEFAULT_PRESET if not (args.rpm and args.load) else None
+                spec = EngineParameters()
 
-            preset = None
+            # 2. Review/edit every V2 engine/calibration default.
+            if interactive:
+                spec = prompt_review_engine_v2(spec)
+            spec = _apply_v2_overrides(spec, args)
+            _validate_v2(spec)
+
+            # 3. Select table/preset.
+            if args.preset is not None:
+                preset_name = args.preset
+            elif interactive:
+                preset_name = prompt_preset_v2(_DEFAULT_PRESET)
+            else:
+                preset_name = _DEFAULT_PRESET
+            if preset_name not in {"none", *[p.name for p in PRESETS.values()]}:
+                raise ValueError(f"unknown preset {preset_name!r}")
+
+            preset = get_preset(preset_name) if preset_name != "none" else None
             ini = None
-            if preset_name:
-                preset = get_preset(preset_name)
+            if preset:
                 ini = find_preset_ini(
-                    preset_name,
-                    search_dirs=[
-                        Path.cwd() / "presets",
-                        Path(__file__).resolve().parents[2] / "presets",
-                    ],
+                    preset.name,
+                    search_dirs=[Path.cwd()/"presets", Path(__file__).resolve().parents[2]/"presets"],
                 )
 
-            if ini:
-                layout = args.layout or ini.layout
-                export = args.export or ini.export
-                load_unit = ini.load_unit
-            elif preset:
-                layout = args.layout or preset.default_layout
-                export = args.export or preset.default_export
-                load_unit = preset.load_unit
+            default_layout = ini.layout if ini else (preset.default_layout if preset else "default")
+            default_export = ini.export if ini else (preset.default_export if preset else "default")
+
+            # 4. Select display layout.
+            if args.layout:
+                layout = args.layout
+            elif interactive:
+                layout = prompt_layout_v2(default_layout)
             else:
-                layout = args.layout or "default"
-                export = args.export or "default"
-                load_unit = "kPa"
+                layout = default_layout
 
-
-            if args.model == "research":
-                if interactive and sys.stdin.isatty():
-                    # Engine profile (if any) pre-fills [defaults]; Enter keeps, type to override
-                    spec = prompt_engine_spec(
-                        layers=layers,
-                        defaults=engine.spec if engine is not None else None,
-                    )
-                    spec = _apply_cli_overrides(spec, args)
-                elif engine is not None:
-                    spec = engine.spec
-                    spec = _apply_cli_overrides(spec, args)
-                else:
-                    spec = EngineSpec(
-                        displacement_cc=float(args.displacement or 1600),
-                        peak_hp=float(args.peak_hp or 280),
-                        peak_hp_rpm=float(args.peak_hp_rpm or 7800),
-                        peak_torque_lbft=float(args.peak_torque or 189),
-                        peak_torque_rpm=float(args.peak_torque_rpm or 4800),
-                        redline_rpm=float(args.redline or 9300),
-                        boost_psi=float(
-                            args.boost_psi if args.boost_psi is not None else 0
-                        ),
-                        base_timing=float(args.base_timing or 10),
-                        mech_timing_at_peak_torque=float(
-                            args.mech_at_peak_torque or 32
-                        ),
-                        idle_rpm=float(args.idle_rpm or 1100),
-                        vacuum_total_timing=float(
-                            args.vacuum_total
-                            if getattr(args, "vacuum_total", None) is not None
-                            else 50
-                        ),
-                        vacuum_full_map_kpa=40.0,
-                        vacuum_advance_max=float(
-                            args.vacuum_total
-                            if getattr(args, "vacuum_total", None) is not None
-                            else 50
-                        ),
-                    )
-                for warning in validate_power(spec):
-                    print(f"warning: {warning}", file=sys.stderr)
-                    if "Peak HP implies more torque" in warning:
-                        tq_needed = (spec.peak_hp * 5252.0) / max(spec.peak_hp_rpm, 1.0)
-                        print(
-                            f"note: using estimated peak torque {tq_needed:.0f} lb-ft "
-                            f"at {spec.peak_hp_rpm:.0f} RPM for consistency",
-                            file=sys.stderr,
-                        )
-                        spec.peak_torque_lbft = tq_needed
+            # 5. Select export format.
+            if args.export:
+                export = args.export
+            elif interactive:
+                export = prompt_export_v2(default_export)
             else:
-                spec = EngineSpec()
+                export = default_export
 
+            # Generate V2 axes. Presets define cell counts/layout conventions;
+            # engine calibration defines where the breakpoints actually belong.
             if args.rpm and args.load:
                 rpm = parse_range(args.rpm)
                 load = parse_range(args.load)
-            elif preset and (not ini or ini.axes == "fixed"):
-                rpm = list(preset.rpm)
-                load = list(preset.load)
-                load_unit = preset.load_unit
-            elif preset and ini and ini.axes == "generated":
-                rpm_n = ini.rpm_count or len(preset.rpm)
-                load_n = ini.load_count or len(preset.load)
-                rpm = generate_rpm_axis(spec, rpm_n)
-                load = generate_load_axis(spec, load_n, unit=load_unit)
-                print(describe_rpm_axis(spec, rpm))
-                print(f"  RPM:  {[int(x) for x in rpm]}")
+                if not any(abs(v-spec.atm_kpa)<0.51 for v in load):
+                    raise ValueError(f"manual load axis must contain atmosphere ({spec.atm_kpa:g} kPa)")
             else:
                 if args.size:
-                    a, b = args.size.lower().replace(" ", "").split("x", 1)
-                    rows, cols = int(a), int(b)
-                elif interactive and sys.stdin.isatty() and engine is None:
-                    rows, cols = _ask_table_size()
+                    a,b=args.size.lower().replace(" ","").split("x",1)
+                    rows,cols=int(a),int(b)
+                elif preset:
+                    rows,cols=len(preset.load),len(preset.rpm)
+                elif interactive:
+                    rows,cols=_ask_table_size()
                 else:
-                    rows, cols = 12, 12
-                rpm = generate_rpm_axis(spec, cols)
-                load = generate_load_axis(spec, rows, unit=load_unit)
-                print(f"Generated axes: {cols} RPM × {rows} load ({load_unit})")
-                print(describe_rpm_axis(spec, rpm))
-                print(f"  RPM:  {[int(x) for x in rpm]}")
-                print(f"  Load: {[int(x) for x in load]}")
+                    rows,cols=12,12
+                rpm=generate_rpm_axis(spec,cols)
+                load=generate_load_axis(spec,rows)
 
-            out_path = args.out
-            if not out_path:
-                default_out = (
-                    f"map-{engine.name.lower()}.csv" if engine else "map.csv"
-                )
-                if interactive and sys.stdin.isatty():
-                    out_path = prompt_output_path(default_out)
-                else:
-                    out_path = default_out
+            print("\nV2 generated axes:")
+            print(f"  RPM:  {[int(x) for x in rpm]}")
+            print(f"  Load: {[int(x) for x in load]} kPa abs")
 
-            if args.model == "research":
-                table = generate_table(
-                    rpm, load, spec=spec, load_unit=load_unit, layers=layers
-                )
+            # 6. Select output filename.
+            default_out = f"map-{spec.name.lower()}.csv" if spec.name != "other" else "map.csv"
+            if args.out:
+                out_path=args.out
+            elif interactive:
+                out_path=prompt_output_path_v2(default_out)
             else:
-                table = generate_baseline(
-                    rpm, load, idle=args.idle, cruise=args.cruise, wot=args.wot
-                )
-                table.load_unit = load_unit
+                out_path=default_out
 
-            save_table(table, out_path, export=export)
-            origin = (
-                ini.origin
-                if ini
-                else (preset.origin if preset else "bottom_left")
-            )
-            print(describe_mechanical_curve(spec))
-            if layers in {"vacuum", "boost", "full"}:
-                print(describe_vacuum_curve(spec))
-            if layers in {"boost", "idle", "full"}:
-                print(describe_boost_curve(spec))
-            if layers in {"idle", "full"}:
-                print(describe_idle_pocket(spec))
-            if layers == "mechanical":
-                print(
-                    "(load axis is unused for timing in this layer — "
-                    "every load row matches the RPM curve)"
-                )
-            veh_note = f", engine={engine.name}" if engine else ""
-            print(
-                f"Wrote {out_path} ({table.shape[0]}×{table.shape[1]} {table.load_unit}, "
-                f"whole °, layers={layers}{veh_note}, origin={origin}, "
-                f"export={export}, view={layout})"
-            )
-            if args.show or (interactive and sys.stdin.isatty()):
+            # 7. Generate with the V2 timing model.
+            table=build_table(rpm,load,spec)
+            save_table(table,out_path,export=export)
+            print(f"\nWrote {out_path} ({len(load)} load × {len(rpm)} RPM, V2 timing, export={export}, view={layout})")
+
+            # 8. Show table (always in interactive mode).
+            if args.show or interactive:
                 print()
-                print(table.format_grid(layout=layout, color=True, precision=0))
+                print(table.format_grid(layout=layout,color=True,precision=0))
+            return 0
 
-        elif args.command == "show":
-            table = load_table(args.path)
-            print(
-                table.format_grid(
-                    precision=args.precision,
-                    layout=args.layout,
-                    color=not args.no_color,
-                )
-            )
-        elif args.command == "bump":
-            table = load_table(args.path).bump(float(args.by))
-            save_table(table, args.out, export=args.export)
+        if args.command == "show":
+            table=load_table(args.path)
+            print(table.format_grid(precision=args.precision,layout=args.layout,color=not args.no_color))
+            return 0
+
+        if args.command == "bump":
+            table=load_table(args.path).bump(float(args.by))
+            save_table(table,args.out,export=args.export)
             print(f"Wrote {args.out} (bumped {args.by:+d}°)")
-        elif args.command == "clamp":
-            table = load_table(args.path).clamp(float(args.minimum), float(args.maximum))
-            save_table(table, args.out, export=args.export)
+            return 0
+
+        if args.command == "clamp":
+            table=load_table(args.path).clamp(float(args.minimum),float(args.maximum))
+            save_table(table,args.out,export=args.export)
             print(f"Wrote {args.out} (clamped {args.minimum}…{args.maximum})")
-        elif args.command == "convert":
-            table = load_table(args.path)
-            save_table(table, args.out, export=args.export)
+            return 0
+
+        if args.command == "convert":
+            table=load_table(args.path)
+            save_table(table,args.out,export=args.export)
             print(f"Wrote {args.out}")
-        else:
-            parser.error(f"unknown command {args.command}")
+            return 0
+
+        parser.error(f"unknown command {args.command}")
     except (OSError, ValueError, KeyError, EOFError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {exc}",file=sys.stderr)
         return 1
-    return 0
 
 
 if __name__ == "__main__":
