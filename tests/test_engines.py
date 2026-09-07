@@ -81,16 +81,17 @@ def test_overboost_follows_profile_max_not_profile_name():
 
 
 def test_d16z6_load_axis_na_plus_one_overboost():
-    """Stock NA (boost_psi=0): max ≈ atm+10 kPa, overboost one logical step past."""
+    """NA (boost_psi=0): max=atm, one overboost tip; densifies below for any size."""
     repo = Path(__file__).resolve().parents[1]
     v = load_engine(repo / "engines" / "d16z6.ini")
     assert v.spec.boost_psi == 0.0
     max_map = _max_load_kpa(v.spec)
     over = _overboost_kpa(v.spec)
-    load = generate_load_axis(v.spec, 12, unit="kPa")
-    assert len(load) == 12
-    assert abs(max_map - 110.0) < 1e-6
-    assert any(abs(x - max_map) < 1.5 for x in load)
-    assert max(load) == over == 140.0
-    assert over > max_map
-    assert 100 in load or any(abs(x - 100) < 1 for x in load)
+    assert abs(max_map - 100.0) < 1e-6
+    assert over == 120.0
+    for count in (12, 24):
+        load = generate_load_axis(v.spec, count, unit="kPa")
+        assert len(load) == count
+        above = [x for x in load if x > 100 + 1e-9]
+        assert above == [120.0], above
+        assert 100 in load or any(abs(x - 100) < 1 for x in load)
