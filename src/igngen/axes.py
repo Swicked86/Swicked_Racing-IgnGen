@@ -312,16 +312,18 @@ def describe_rpm_axis(spec: EngineSpec, axis: list[float]) -> str:
 
 
 def _max_load_kpa(spec: EngineSpec) -> float:
+    """Highest profile MAP (kPa abs). NA (boost_psi=0) stops at atmosphere."""
     atm = spec.atm_kpa
     if spec.boost_psi > 0:
         return atm + spec.boost_psi * KPA_PER_PSI
-    return atm + 10.0
+    return float(atm)
 
 
 def _max_load_inhg(spec: EngineSpec) -> float:
+    """Highest profile boost (inHg gauge). NA → 0 (atmosphere)."""
     if spec.boost_psi > 0:
         return spec.boost_psi * 2.036
-    return 10.0
+    return 0.0
 
 
 def _overboost_kpa(spec: EngineSpec) -> float:
@@ -344,7 +346,7 @@ def load_landmarks_kpa(spec: EngineSpec) -> list[Landmark]:
     max_boost_kpa = _max_load_kpa(spec)
     overboost = _overboost_kpa(spec)
     idle_map = 45.0
-    return [
+    marks = [
         Landmark(20, 100, "deep_vacuum"),
         Landmark(30, 70, "high_vacuum"),
         Landmark(idle_map, 90, "idle_map"),
@@ -353,16 +355,23 @@ def load_landmarks_kpa(spec: EngineSpec) -> list[Landmark]:
         Landmark(60, 50, "part_throttle"),
         Landmark(80, 50, "high_part"),
         Landmark(atm, 100, "atmosphere"),
-        Landmark(min(atm + 20, max_boost_kpa), 70, "light_boost"),
-        Landmark(max_boost_kpa, 100, "max_boost"),
-        Landmark(overboost, 95, "overboost"),
     ]
+    # Boosted: light + max MAP. NA: only the single over-atm overboost row.
+    if spec.boost_psi > 0:
+        light = min(atm + 20, max_boost_kpa)
+        if light > atm + 1e-9:
+            marks.append(Landmark(light, 70, "light_boost"))
+        if max_boost_kpa > atm + 1e-9:
+            marks.append(Landmark(max_boost_kpa, 100, "max_boost"))
+    if overboost > atm + 1e-9:
+        marks.append(Landmark(overboost, 95, "overboost"))
+    return marks
 
 
 def load_landmarks_inhg(spec: EngineSpec) -> list[Landmark]:
     max_boost = _max_load_inhg(spec)
     overboost = _overboost_inhg(spec)
-    return [
+    marks = [
         Landmark(-90.0, 80, "deep_vacuum"),
         Landmark(-55.0, 60, "high_vacuum"),
         Landmark(-31.0, 50, "mod_vacuum"),
@@ -370,12 +379,18 @@ def load_landmarks_inhg(spec: EngineSpec) -> list[Landmark]:
         Landmark(-10.0, 50, "light_vacuum"),
         Landmark(-2.5, 70, "near_atm_vac"),
         Landmark(0.0, 100, "atmosphere"),
-        Landmark(2.5, 70, "near_atm_boost"),
-        Landmark(min(13.5, max_boost), 60, "light_boost"),
-        Landmark(max_boost, 100, "max_boost"),
-        Landmark(max_boost * 0.5, 50, "mid_boost"),
-        Landmark(overboost, 95, "overboost"),
     ]
+    if spec.boost_psi > 0:
+        marks.append(Landmark(2.5, 70, "near_atm_boost"))
+        light = min(13.5, max_boost)
+        if light > 1e-9:
+            marks.append(Landmark(light, 60, "light_boost"))
+        if max_boost > 1e-9:
+            marks.append(Landmark(max_boost, 100, "max_boost"))
+            marks.append(Landmark(max_boost * 0.5, 50, "mid_boost"))
+    if overboost > 1e-9:
+        marks.append(Landmark(overboost, 95, "overboost"))
+    return marks
 
 
 def select_axis(
@@ -384,13 +399,20 @@ def select_axis(
     *,
     ceiling: float | None = None,
     floor: float | None = None,
+    no_fill_above: float | None = None,
 ) -> list[float]:
-    """Pick landmarks then fill gaps. Never extends past ceiling (if set)."""
+    """Pick landmarks then fill gaps. Never extends past ceiling (if set).
+
+    ``no_fill_above``: never insert fillers strictly above this value (ceiling
+    tip may still be pinned). Used for NA load axes so atm→overboost stays a
+    single step no matter how large ``count`` is — extra rows densify below.
+    """
     if count < 2:
         raise ValueError("axis count must be >= 2")
 
     ceil = _as_int(ceiling) if ceiling is not None else None
     fl = _as_int(floor) if floor is not None else None
+    nfa = float(no_fill_above) if no_fill_above is not None else None
 
     best: dict[float, Landmark] = {}
     for lm in landmarks:
@@ -398,6 +420,9 @@ def select_axis(
         if ceil is not None and key > ceil:
             continue
         if fl is not None and key < fl:
+            continue
+        # Drop mid-boost landmarks when NA tip-only region is active
+        if nfa is not None and key > nfa + 1e-9 and (ceil is None or abs(key - ceil) > 1e-9):
             continue
         if key not in best or lm.priority > best[key].priority:
             best[key] = Landmark(key, lm.priority, lm.label)
@@ -423,27 +448,32 @@ def select_axis(
     def _split_largest_gap() -> bool:
         gaps = [(values[i + 1] - values[i], i) for i in range(len(values) - 1)]
         gaps.sort(reverse=True)
-        if not gaps or gaps[0][0] <= 1:
-            return False
-        _, i = gaps[0]
-        mid = _as_int((values[i] + values[i + 1]) / 2.0)
-        if mid <= values[i] or mid >= values[i + 1] or mid in values:
-            mid = values[i] + 1
-            if mid >= values[i + 1]:
+        for gap_size, i in gaps:
+            if gap_size <= 1:
                 return False
-        if ceil is not None and mid > ceil:
-            return False
-        if fl is not None and mid < fl:
-            return False
-        values.insert(i + 1, mid)
-        return True
+            # Do not densify above the NA atmosphere fence
+            if nfa is not None and values[i] >= nfa - 1e-9:
+                continue
+            mid = _as_int((values[i] + values[i + 1]) / 2.0)
+            if mid <= values[i] or mid >= values[i + 1] or mid in values:
+                mid = values[i] + 1
+                if mid >= values[i + 1]:
+                    continue
+            if nfa is not None and mid > nfa + 1e-9:
+                continue
+            if ceil is not None and mid > ceil:
+                continue
+            if fl is not None and mid < fl:
+                continue
+            values.insert(i + 1, mid)
+            return True
+        return False
 
     while len(values) < count:
         if not _split_largest_gap():
             break
         values[:] = _unique_sorted(values)
 
-    # Still short? densify only inside [floor, ceiling] — never pad past ceiling
     guard = 0
     while len(values) < count and guard < 40:
         guard += 1
@@ -456,29 +486,33 @@ def select_axis(
     if fl is not None:
         values = [v for v in values if v >= fl]
     values = _unique_sorted(values)
+    return [float(v) for v in values[:count]]
 
-    # If filtering dropped us below count, split again inside the range
-    guard = 0
-    while len(values) < count and guard < 40:
-        guard += 1
-        if not _split_largest_gap():
-            break
-        values[:] = _unique_sorted(values)
-
-    return values[:count]
 
 
 def generate_load_axis(spec: EngineSpec, count: int, *, unit: str = "kPa") -> list[float]:
+    """Build load breakpoints (landmark priority + gap fill, like RPM).
+
+    NA (``boost_psi == 0``): atmosphere is a fence — fillers densify at/below
+    it for any table size (12, 24, …); exactly one tip row sits above (overboost).
+    """
     if unit.lower() in {"inhg", "inhg_gauge"}:
         floor = -90.0
-        ceiling = _overboost_inhg(spec)
+        over = _overboost_inhg(spec)
+        marks = load_landmarks_inhg(spec)
+        nfa = 0.0 if spec.boost_psi <= 0 else None
         return select_axis(
-            load_landmarks_inhg(spec), count, floor=floor, ceiling=ceiling
+            marks, count, floor=floor, ceiling=over, no_fill_above=nfa
         )
-    floor = 20.0
-    ceiling = _overboost_kpa(spec)
-    return select_axis(load_landmarks_kpa(spec), count, floor=floor, ceiling=ceiling)
 
+    floor = 20.0
+    atm = float(spec.atm_kpa)
+    over = _overboost_kpa(spec)
+    marks = load_landmarks_kpa(spec)
+    nfa = atm if spec.boost_psi <= 0 else None
+    return select_axis(
+        marks, count, floor=floor, ceiling=over, no_fill_above=nfa
+    )
 
 def example_axes_for_docs(spec: EngineSpec | None = None) -> dict[str, list[float]]:
     spec = spec or EngineSpec()
