@@ -14,7 +14,7 @@ def load_table(path: str | Path) -> TimingTable:
     return load_csv(path)
 
 
-def save_table(table: TimingTable, path: str | Path, *, export: str = "swicked") -> None:
+def save_table(table: TimingTable, path: str | Path, *, export: str = "default") -> None:
     path = Path(path)
     if path.suffix.lower() == ".json":
         save_json(table, path)
@@ -62,7 +62,7 @@ def load_csv(path: str | Path) -> TimingTable:
     return TimingTable(rpm=rpm, load=load_sorted, values=values)
 
 
-def save_csv(table: TimingTable, path: str | Path, *, export: str = "swicked") -> None:
+def save_csv(table: TimingTable, path: str | Path, *, export: str = "default") -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", newline="") as f:
@@ -73,7 +73,7 @@ def save_csv(table: TimingTable, path: str | Path, *, export: str = "swicked") -
                 writer.writerow([_num(r), *[str(int(round(c))) for c in table.values[i]]])
             return
 
-        # swicked / base: load ascending (low→high) so first data row is low load;
+        # default / base: load ascending (low→high) so first data row is low load;
         # last row is high load — bottom-left origin when viewed with RPM→
         writer.writerow(["load", *[_num(x) for x in table.rpm]])
         for j in range(len(table.load)):
