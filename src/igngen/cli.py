@@ -12,6 +12,7 @@ from .model import (
     EngineSpec,
     describe_mechanical_curve,
     describe_boost_curve,
+    describe_idle_pocket,
     describe_vacuum_curve,
     generate_table,
     validate_power,
@@ -25,7 +26,7 @@ from .vehicles import describe_vehicle, find_vehicle, list_vehicles
 _LAYOUTS = ("swicked", "alpha")
 _EXPORTS = ("swicked", "alpha")
 _DEFAULT_PRESET = "base"
-_DEFAULT_LAYERS = "boost"
+_DEFAULT_LAYERS = "idle"
 
 
 def _ask_table_size() -> tuple[int, int]:
@@ -75,6 +76,8 @@ def _apply_cli_overrides(spec: EngineSpec, args: argparse.Namespace) -> EngineSp
     if getattr(args, "boost_limit", None) is not None:
         spec.boost_timing_limit = float(args.boost_limit)
         spec.boost_retard_max = float(args.boost_limit)
+    if getattr(args, "idle_bump", None) is not None:
+        spec.idle_pocket_bump = float(args.idle_bump)
     return spec
 
 
@@ -100,9 +103,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_new.add_argument(
         "--layers",
-        choices=("mechanical", "vacuum", "boost", "full"),
+        choices=("mechanical", "vacuum", "boost", "idle", "full"),
         default=_DEFAULT_LAYERS,
-        help="Timing layers (default: boost — mech + vac + boost retard)",
+        help="Timing layers (default: idle — boost + idle pocket)",
     )
     p_new.add_argument("--rpm", help="RPM start:stop:step (overrides generated/fixed axes)")
     p_new.add_argument("--load", help="Load start:stop:step (overrides generated/fixed axes)")
@@ -124,6 +127,12 @@ def main(argv: list[str] | None = None) -> int:
         type=int,
         default=None,
         help="Total timing ° minimum at full boost",
+    )
+    p_new.add_argument(
+        "--idle-bump",
+        type=int,
+        default=None,
+        help="Idle pocket ±° at idle MAP band (bottom +N / top −N)",
     )
     p_new.add_argument("--peak-torque-rpm", type=int, default=None)
     p_new.add_argument("--peak-hp", type=float, default=None)
@@ -357,8 +366,10 @@ def main(argv: list[str] | None = None) -> int:
             print(describe_mechanical_curve(spec))
             if layers in {"vacuum", "boost", "full"}:
                 print(describe_vacuum_curve(spec))
-            if layers in {"boost", "full"}:
+            if layers in {"boost", "idle", "full"}:
                 print(describe_boost_curve(spec))
+            if layers in {"idle", "full"}:
+                print(describe_idle_pocket(spec))
             if layers == "mechanical":
                 print(
                     "(load axis is unused for timing in this layer — "
