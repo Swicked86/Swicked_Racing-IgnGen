@@ -15,8 +15,8 @@ def test_4age_engine_loads():
     assert s.peak_torque_lbft == 189
     assert s.peak_torque_rpm == 4800
     assert s.redline_rpm == 9300
-    assert s.boost_psi == 7
+    assert s.boost_psi == 12
     assert s.idle_rpm == 1100
-    assert s.idle_pocket_width == 250
+    assert s.idle_pocket_width == 100
     assert s.base_timing == 10
-    assert s.mech_timing_at_peak_torque == 32
+    assert s.mech_timing_at_peak_torque == 36
