@@ -199,11 +199,7 @@ def _clean_map(value: float, step: int) -> float:
 
 
 def _decel_anchor(spec: EngineParameters) -> float:
-    """One clean row below the lowest normal idle-MAP boundary.
-
-    This row represents closed-throttle deceleration / fuel-cut territory. V2
-    intentionally does not spend discretionary rows below idle_map_lo.
-    """
+    """One clean row below the lowest normal idle-MAP boundary."""
     idle_lo = float(spec.idle_map_lo)
     step = 10 if idle_lo >= 30 else 5
     candidate = math.floor((idle_lo - step) / step) * step
@@ -293,14 +289,10 @@ def generate_load_axis(spec: EngineParameters, count: int) -> list[float]:
     remaining = count - len(result)
 
     if remaining > 0:
-        # Allocate most NA resolution between the upper idle boundary and atmosphere.
-        # Keep the lower side sparse: decel + the explicit idle landmarks are enough.
         upper_start = max(idle_hi, decel)
         na_span = max(atm - upper_start, 1.0)
         if boosted:
             boost_span = max(max_boost - atm, 1.0)
-            # Weight normal drivability more heavily than boost, while ensuring boost
-            # receives useful resolution when present.
             na_extra = int(round(remaining * na_span / (na_span + 0.65 * boost_span)))
             na_extra = max(0, min(remaining, na_extra))
             boost_extra = remaining - na_extra
@@ -314,8 +306,7 @@ def generate_load_axis(spec: EngineParameters, count: int) -> list[float]:
             for v in _load_ladder(upper_start, atm, na_step)
             if upper_start < v < atm and v not in result
         ]
-        chosen_na = _select_evenly(na_candidates, na_extra)
-        result.extend(chosen_na)
+        result.extend(_select_evenly(na_candidates, na_extra))
 
         if boosted and boost_extra > 0:
             boost_candidates = [
@@ -323,29 +314,32 @@ def generate_load_axis(spec: EngineParameters, count: int) -> list[float]:
                 for v in _load_ladder(atm, max_boost, boost_step)
                 if atm < v < max_boost and v not in result
             ]
-            chosen_boost = _select_evenly(boost_candidates, boost_extra)
-            result.extend(chosen_boost)
+            result.extend(_select_evenly(boost_candidates, boost_extra))
 
     result = _unique_sorted(result)
 
-    # If a coarse clean ladder could not satisfy the requested table size, fill only
-    # in the useful region (idle_hi -> overboost), never below idle_map_lo.
-    step = 5
-    candidates = [
-        v
-        for v in _load_ladder(idle_hi, overboost, step)
-        if v not in result and v > idle_hi and v < overboost
-    ]
-    while len(result) < count and candidates:
-        gaps: list[tuple[float, float]] = []
-        for candidate in candidates:
-            lower = max((v for v in result if v < candidate), default=result[0])
-            upper = min((v for v in result if v > candidate), default=result[-1])
-            gaps.append((upper - lower, candidate))
-        _, candidate = max(gaps, key=lambda item: (item[0], -item[1]))
-        result.append(candidate)
-        result = _unique_sorted(result)
-        candidates.remove(candidate)
+    # Large tables or a high-MAP idle (for example a large camshaft) may not have
+    # enough 5-kPa positions above idle to satisfy the requested row count. Fill
+    # progressively with clean 5, 2, then 1-kPa breakpoints, but never below
+    # idle_map_lo. This preserves the one-row-only decel policy.
+    for step in (5, 2, 1):
+        if len(result) >= count:
+            break
+        candidates = [
+            v
+            for v in _load_ladder(idle_lo, overboost, step)
+            if v not in result and idle_lo < v < overboost
+        ]
+        while len(result) < count and candidates:
+            gaps: list[tuple[float, float]] = []
+            for candidate in candidates:
+                lower = max((v for v in result if v < candidate), default=result[0])
+                upper = min((v for v in result if v > candidate), default=result[-1])
+                gaps.append((upper - lower, candidate))
+            _, candidate = max(gaps, key=lambda item: (item[0], -item[1]))
+            result.append(candidate)
+            result = _unique_sorted(result)
+            candidates.remove(candidate)
 
     if len(result) != count:
         raise ValueError(
