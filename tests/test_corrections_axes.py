@@ -63,11 +63,12 @@ def test_idle_pocket_width_affects_timing_full_layers():
     assert t_wide != t_narrow
 
 
-def test_inhg_idle_pocket_band_columns():
-    """Alpha/inHg axis must keep ≥2 load columns inside idle MAP band for ±° pocket."""
+
+def test_inhg_load_axis_is_kpa_converted():
+    """inHg axis = kPa generation first, then kpa_abs_to_inhg_gauge (idle band preserved)."""
     from igngen.axes import generate_load_axis
     from igngen.model import EngineSpec, timing_at
-    from igngen.units import inhg_gauge_to_kpa_abs
+    from igngen.units import inhg_gauge_to_kpa_abs, kpa_abs_to_inhg_gauge
 
     spec = EngineSpec(
         base_timing=16,
@@ -84,10 +85,17 @@ def test_inhg_idle_pocket_band_columns():
         cranking_timing=10,
         vacuum_total_timing=50,
     )
-    load = generate_load_axis(spec, 16, unit="inHg")
-    band = [x for x in load if 30 <= inhg_gauge_to_kpa_abs(x) <= 45]
+    kpa = generate_load_axis(spec, 16, unit="kPa")
+    inhg = generate_load_axis(spec, 16, unit="inHg")
+    assert len(kpa) == len(inhg) == 16
+    assert all(
+        abs(inhg[i] - kpa_abs_to_inhg_gauge(kpa[i], spec.atm_kpa)) < 1e-9
+        for i in range(len(kpa))
+    )
+    band = [x for x in kpa if 30 <= x <= 45]
     assert len(band) >= 2, band
-    kpa = inhg_gauge_to_kpa_abs(band[0])
-    assert timing_at(850, kpa, spec, layers="idle") == 18
-    assert timing_at(900, kpa, spec, layers="idle") == 16
-    assert timing_at(950, kpa, spec, layers="idle") == 14
+    k = band[0]
+    assert timing_at(850, k, spec, layers="idle") == 18
+    assert timing_at(900, k, spec, layers="idle") == 16
+    assert timing_at(950, k, spec, layers="idle") == 14
+
