@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .model import EngineSpec, LayerName
+from .engines import EngineProfile, describe_engine, find_engine, list_engines
 
 
 def _ask(prompt: str, default: float | int | str | None = None, *, cast=float):
@@ -164,6 +165,58 @@ def prompt_engine_spec(
         boost_retard_max=float(boost_timing_limit),
         boost_retard_per_psi=float(boost_retard_per_psi),
     )
+
+
+
+
+def prompt_engine_choice() -> EngineProfile | None:
+    """Ask which engine profile to use, or start a new blank one.
+
+    Returns the selected ``EngineProfile``, or ``None`` to generate from scratch.
+    """
+    paths = list_engines()
+    profiles: list[EngineProfile] = []
+    for path in paths:
+        v = find_engine(path.stem)
+        if v is not None:
+            profiles.append(v)
+
+    print("— Engine —")
+    if not profiles:
+        print("  (no profiles under engines/)")
+        print("  Enter a name to look up, or press Enter / type new for blank specs.\n")
+    else:
+        print("  Select a profile, or new to enter specs from scratch:\n")
+        for i, v in enumerate(profiles, start=1):
+            print(f"  {i}) {v.name} — {v.description}")
+        print("  0) new — generate without a profile\n")
+
+    while True:
+        raw = input("Engine [new]: ").strip()
+        if not raw or raw.lower() in {"new", "n", "none", "0", "-"}:
+            print()
+            return None
+        # numeric pick
+        if raw.isdigit():
+            idx = int(raw)
+            if idx == 0:
+                print()
+                return None
+            if 1 <= idx <= len(profiles):
+                chosen = profiles[idx - 1]
+                print(describe_engine(chosen))
+                print()
+                return chosen
+            print(f"  pick 0–{len(profiles)}")
+            continue
+        # name lookup
+        found = find_engine(raw)
+        if found is not None:
+            print(describe_engine(found))
+            print()
+            return found
+        known = ", ".join(v.name for v in profiles) or "(none)"
+        print(f"  unknown {raw!r}; known: {known} (or new)")
 
 
 def prompt_output_path(default: str = "map.csv") -> str:
