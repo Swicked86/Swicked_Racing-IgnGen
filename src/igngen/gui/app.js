@@ -76,7 +76,9 @@
     td.className = 'timing' + (Math.abs(data.load_kpa[loadIndex] - 100) < .51 ? ' atm' : '');
     td.textContent = value;
     td.style.background = cellColor(value, min, max);
-    td.title = `${data.rpm[rpmIndex]} RPM / ${data.load_kpa[loadIndex]} kPa = ${value}° BTDC`;
+    const inhg = Array.isArray(data.load_inhg_gauge) ? data.load_inhg_gauge[loadIndex] : null;
+    const alphaNote = inhg === null ? '' : ` / ${inhg} inHg gauge`;
+    td.title = `${data.rpm[rpmIndex]} RPM / ${data.load_kpa[loadIndex]} kPa abs${alphaNote} = ${value}° BTDC`;
     return td;
   }
 
@@ -120,12 +122,15 @@
     const hr = document.createElement('tr');
     const first = document.createElement('th');
     first.className = 'load-head';
-    first.textContent = 'RPM/kPa';
+    first.textContent = 'RPM/inHg';
     hr.appendChild(first);
-    data.load_kpa.forEach(load => {
+
+    const alphaLoad = Array.isArray(data.load_inhg_gauge) ? data.load_inhg_gauge : data.load_kpa;
+    alphaLoad.forEach((load, loadIndex) => {
       const th = document.createElement('th');
-      th.textContent = load;
-      if (Math.abs(load - 100) < .51) th.classList.add('atm-head');
+      th.textContent = Number(load).toFixed(2).replace(/\.00$/, '');
+      if (Math.abs(data.load_kpa[loadIndex] - 100) < .51) th.classList.add('atm-head');
+      th.title = `${data.load_kpa[loadIndex]} kPa absolute`;
       hr.appendChild(th);
     });
     thead.appendChild(hr);
@@ -152,7 +157,8 @@
     const mode = viewMode.value || 'default';
     const table = mode === 'alpha' ? renderAlpha(data, min, max) : renderDefault(data, min, max);
     tableWrap.replaceChildren(table);
-    tableMeta.textContent = `${data.engine} · ${data.load_kpa.length} load × ${data.rpm.length} RPM · ${min}°…${max}° BTDC · view=${mode} · export=${exportMode.value}`;
+    const loadUnit = mode === 'alpha' ? 'inHg gauge' : 'kPa abs';
+    tableMeta.textContent = `${data.engine} · ${data.load_kpa.length} load × ${data.rpm.length} RPM · ${min}°…${max}° BTDC · view=${mode} (${loadUnit}) · export=${exportMode.value}`;
   }
 
   async function generate(event) {
@@ -170,7 +176,7 @@
       if (!response.ok) throw new Error(data.error || 'Generation failed');
       lastTable = data;
       renderTable(data);
-      message.textContent = `Generated ${data.schema}. 100 kPa crossover is outlined in cyan.`;
+      message.textContent = `Generated ${data.schema}. 100 kPa / 0 inHg crossover is outlined in cyan.`;
       setStatus('GENERATED', 'ready');
     } catch (error) {
       message.textContent = error.message;
