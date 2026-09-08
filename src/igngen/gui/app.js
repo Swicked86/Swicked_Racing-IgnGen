@@ -9,6 +9,10 @@
   const message = document.getElementById('message');
   const generateButton = form.querySelector('.generate');
   let lastTable = null;
+  let engineRequest = null;
+  let generationRequest = null;
+  let engineRevision = 0;
+  let generationRevision = 0;
 
   const numericFields = [
     'displacement_cc','peak_hp','peak_hp_rpm','peak_torque_lbft','peak_torque_rpm','redline_rpm',
@@ -32,19 +36,50 @@
     });
   }
 
+  function clearGeneratedTable() {
+    lastTable = null;
+    tableWrap.replaceChildren();
+    tableMeta.textContent = 'No generated table';
+  }
+
   async function loadEngine(name) {
+    const revision = ++engineRevision;
+
+    if (engineRequest) engineRequest.abort();
+    if (generationRequest) {
+      generationRequest.abort();
+      generationRequest = null;
+      generationRevision += 1;
+    }
+
+    engineRequest = new AbortController();
+    clearGeneratedTable();
+    generateButton.disabled = true;
     setStatus('LOADING', 'busy');
     message.textContent = 'Loading engine defaults…';
+
     try {
-      const response = await fetch(`/api/engine/${encodeURIComponent(name)}`, {cache:'no-store'});
+      const response = await fetch(`/api/engine/${encodeURIComponent(name)}`, {
+        cache:'no-store',
+        signal:engineRequest.signal
+      });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Failed to load engine');
+      if (revision !== engineRevision || name !== engineSelect.value) return;
+
       fillSpec(data);
       message.textContent = `${data.name}: ${data.description}`;
       setStatus('READY', 'ready');
     } catch (error) {
+      if (error.name === 'AbortError') return;
+      if (revision !== engineRevision) return;
       message.textContent = error.message;
       setStatus('ERROR', 'error');
+    } finally {
+      if (revision === engineRevision) {
+        engineRequest = null;
+        generateButton.disabled = false;
+      }
     }
   }
 
@@ -156,7 +191,9 @@
   }
 
   function renderTable(data) {
+    if (!data || !Array.isArray(data.timing) || !data.timing.length) return;
     const values = data.timing.flat();
+    if (!values.length) return;
     const min = Math.min(...values);
     const max = Math.max(...values);
     const mode = viewMode.value || 'default';
@@ -168,26 +205,44 @@
 
   async function generate(event) {
     event.preventDefault();
+    if (engineRequest) return;
+
+    const revision = ++generationRevision;
+    const engineAtStart = engineSelect.value;
+    if (generationRequest) generationRequest.abort();
+    generationRequest = new AbortController();
+
     generateButton.disabled = true;
+    engineSelect.disabled = true;
     setStatus('GENERATING', 'busy');
     message.textContent = 'Generating ignition surface…';
+
     try {
       const response = await fetch('/api/generate', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body:JSON.stringify(buildPayload())
+        body:JSON.stringify(buildPayload()),
+        signal:generationRequest.signal
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Generation failed');
+      if (revision !== generationRevision || engineAtStart !== engineSelect.value) return;
+
       lastTable = data;
       renderTable(data);
       message.textContent = `Generated ${data.schema}. 100 kPa / 0 inHg crossover is outlined in cyan.`;
       setStatus('GENERATED', 'ready');
     } catch (error) {
+      if (error.name === 'AbortError') return;
+      if (revision !== generationRevision) return;
       message.textContent = error.message;
       setStatus('ERROR', 'error');
     } finally {
-      generateButton.disabled = false;
+      if (revision === generationRevision) {
+        generationRequest = null;
+        generateButton.disabled = false;
+        engineSelect.disabled = false;
+      }
     }
   }
 
