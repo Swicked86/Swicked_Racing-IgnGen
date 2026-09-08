@@ -12,7 +12,7 @@ All load calculations are performed in **kPa absolute**. Display and export conv
 
 ## RPM axis
 
-The RPM axis preserves engine landmarks first, then allocates the remaining cells into useful operating regions.
+The RPM axis preserves engine landmarks first, then allocates remaining cells into useful operating regions.
 
 ### Required landmarks
 
@@ -22,12 +22,33 @@ The generator begins with these anchors:
 - idle-pocket lower edge
 - target idle RPM
 - idle-pocket upper edge
-- peak torque RPM
+- three mechanical **Recurve** RPM control points
+- peak torque RPM / full mechanical timing endpoint
 - soft-limit start RPM
 - redline RPM
 - overspeed RPM
 
 If the requested cell count permits it, peak horsepower RPM is also preserved when it lies between peak torque and the overspeed endpoint.
+
+### Mechanical Recurve landmarks
+
+The mechanical advance curve is defined by five points:
+
+```text
+idle RPM / base timing
+recurve point 1 RPM / timing
+recurve point 2 RPM / timing
+recurve point 3 RPM / timing
+peak torque RPM / full mechanical timing
+```
+
+The three Recurve points must have strictly increasing RPM values between idle and peak torque. Their timing values are user-set and may be used to bring timing in earlier, later, flatten early, or create a deliberate intermediate taper.
+
+IgnGen uses shape-preserving cubic interpolation through the points so the generated mechanical curve passes through each user-entered knot without the uncontrolled overshoot associated with a generic spline.
+
+Profiles that do not contain an explicit `[recurve]` section receive collinear defaults at 25%, 50%, and 75% of both the RPM span and timing span. This exactly preserves the original straight-line mechanical advance behavior.
+
+Because Recurve RPM values are actual calibration knots, the RPM-axis generator protects them as table breakpoints whenever the requested table size permits it.
 
 ### Idle-pocket edges
 
@@ -59,7 +80,7 @@ After protected landmarks are inserted, remaining cells are weighted approximate
 ~1/3  peak torque -> overspeed
 ```
 
-This gives more resolution to the mechanical-advance climb while retaining useful definition through the high-RPM region.
+The first region now contains the explicit Recurve knots, so filler cells add resolution around the user-defined mechanical-advance shape rather than defining the shape themselves.
 
 Candidate values are snapped to readable RPM steps from:
 
@@ -81,7 +102,7 @@ The atmospheric breakpoint is mandatory:
 100 kPa absolute
 ```
 
-At this row, pressure correction is zero and timing follows the mechanical RPM curve directly.
+At this row, pressure correction is zero and timing follows the Recurve-defined mechanical RPM curve directly.
 
 The generator asserts that this breakpoint remains present in the final load axis.
 
@@ -189,6 +210,7 @@ The generated axes are designed to preserve:
 
 - cranking and idle behavior
 - the idle timing pocket
+- user-defined Recurve points
 - mechanical advance progression
 - peak torque and peak horsepower landmarks
 - the 100 kPa pressure crossover
