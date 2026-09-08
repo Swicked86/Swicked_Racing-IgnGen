@@ -135,7 +135,7 @@ Select export format
     ↓
 Select output filename
     ↓
-Generate V2 timing table
+Generate timing table
     ↓
 Display generated table
 ```
@@ -477,7 +477,6 @@ src/igngen/
 ├── cli.py             # command-line application
 ├── gui_app.py         # GUI launcher + integration API
 ├── gui/               # HTML/CSS/JavaScript GUI
-├── v2_engine.py       # canonical V2 timing and axis backend
 ├── table.py           # timing-table representation
 ├── io_files.py        # import/export helpers
 └── units.py           # kPa / inHg conversion helpers
@@ -521,7 +520,7 @@ igngen-gui --browser
 
 ## Release status
 
-IgnGen is under active development. The V2 timing backend, interactive CLI, engine profiles, GUI, default/Alpha table views, unit conversion, export orientation, integration payload, and automated tests are present and usable for evaluation.
+IgnGen is under active development. The timing backend, interactive CLI, engine profiles, GUI, default/Alpha table views, unit conversion, export orientation, integration payload, and automated tests are present and usable for evaluation.
 
 Before treating a generated table as a final calibration, validate it on the target engine.
 
