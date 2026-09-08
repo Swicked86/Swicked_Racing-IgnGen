@@ -9,16 +9,16 @@ from .generate import generate_baseline
 from .io_files import load_table, save_table
 from .preset_ini import find_preset_ini
 from .presets import PRESETS, get_preset
-from .prompt_v2 import (
-    prompt_engine_choice_v2,
-    prompt_export_v2,
-    prompt_layout_v2,
-    prompt_output_path_v2,
-    prompt_preset_v2,
-    prompt_review_engine_v2,
+from .prompts import (
+    prompt_engine_choice,
+    prompt_export,
+    prompt_layout,
+    prompt_output_path,
+    prompt_preset,
+    prompt_review_engine,
 )
 from .table import parse_range
-from .v2_engine import (
+from .calibration import (
     EngineParameters,
     build_table,
     describe_spec,
@@ -54,7 +54,7 @@ def _ask_table_size() -> tuple[int, int]:
         return rows, cols
 
 
-def _apply_v2_overrides(spec: EngineParameters, args: argparse.Namespace) -> EngineParameters:
+def _apply_overrides(spec: EngineParameters, args: argparse.Namespace) -> EngineParameters:
     mapping = {
         "displacement_cc": args.displacement,
         "peak_hp": args.peak_hp,
@@ -86,7 +86,7 @@ def _apply_v2_overrides(spec: EngineParameters, args: argparse.Namespace) -> Eng
     return spec.with_overrides(**mapping)
 
 
-def _validate_v2(spec: EngineParameters) -> None:
+def _validate(spec: EngineParameters) -> None:
     if spec.idle_map_hi <= spec.idle_map_lo:
         raise ValueError("idle_map_hi must be greater than idle_map_lo")
     if spec.idle_pocket_width <= 0:
@@ -243,21 +243,21 @@ def main(argv: list[str] | None = None) -> int:
                 print(describe_spec(spec))
                 print()
             elif interactive:
-                spec = prompt_engine_choice_v2()
+                spec = prompt_engine_choice()
             else:
                 spec = EngineParameters()
 
             # 2. Review/edit engine/calibration defaults.
             if interactive:
-                spec = prompt_review_engine_v2(spec)
-            spec = _apply_v2_overrides(spec, args)
-            _validate_v2(spec)
+                spec = prompt_review_engine(spec)
+            spec = _apply_overrides(spec, args)
+            _validate(spec)
 
             # 3. Select table/preset.
             if args.preset is not None:
                 preset_name = args.preset
             elif interactive:
-                preset_name = prompt_preset_v2(_DEFAULT_PRESET)
+                preset_name = prompt_preset(_DEFAULT_PRESET)
             else:
                 preset_name = _DEFAULT_PRESET
             if preset_name not in {"none", *[p.name for p in PRESETS.values()]}:
@@ -278,7 +278,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.layout:
                 layout = args.layout
             elif interactive:
-                layout = prompt_layout_v2(default_layout)
+                layout = prompt_layout(default_layout)
             else:
                 layout = default_layout
 
@@ -286,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.export:
                 export = args.export
             elif interactive:
-                export = prompt_export_v2(default_export)
+                export = prompt_export(default_export)
             else:
                 export = default_export
 
@@ -319,7 +319,7 @@ def main(argv: list[str] | None = None) -> int:
             if args.out:
                 out_path=args.out
             elif interactive:
-                out_path=prompt_output_path_v2(default_out)
+                out_path=prompt_output_path(default_out)
             else:
                 out_path=default_out
 
