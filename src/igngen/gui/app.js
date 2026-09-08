@@ -17,6 +17,7 @@
   const numericFields = [
     'displacement_cc','peak_hp','peak_hp_rpm','peak_torque_lbft','peak_torque_rpm','redline_rpm',
     'cranking_rpm','cranking_timing','base_timing','mech_timing_at_peak_torque',
+    'recurve_rpm_1','recurve_timing_1','recurve_rpm_2','recurve_timing_2','recurve_rpm_3','recurve_timing_3',
     'vacuum_full_map_kpa','vacuum_total_timing','boost_psi','boost_timing_limit','boost_retard_gain',
     'idle_rpm','idle_pocket_width','idle_pocket_lower_share','idle_pocket_upper_share',
     'idle_timing_target','idle_timing_delta','idle_map_lo','idle_map_hi',
@@ -230,7 +231,10 @@
 
       lastTable = data;
       renderTable(data);
-      message.textContent = `Generated ${data.schema}. 100 kPa / 0 inHg crossover is outlined in cyan.`;
+      const recurve = Array.isArray(data.recurve)
+        ? ` Recurve: ${data.recurve.map(p => `${p.rpm}@${p.timing}°`).join(', ')}.`
+        : '';
+      message.textContent = `Generated ${data.schema}. 100 kPa / 0 inHg crossover is outlined in cyan.${recurve}`;
       setStatus('GENERATED', 'ready');
     } catch (error) {
       if (error.name === 'AbortError') return;
