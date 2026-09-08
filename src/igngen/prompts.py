@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from .calibration import EngineParameters, describe_spec, find_engine_profile, list_engine_profiles, load_engine_profile
+from .calibration import EngineParameters, describe_spec, find_engine_profile, list_engine_profiles, load_engine_profile, validate_recurve
 
 
 def _ask(prompt: str, default=None, *, cast=float):
@@ -54,12 +54,7 @@ def prompt_engine_choice() -> EngineParameters:
 
 
 def prompt_review_engine(spec: EngineParameters) -> EngineParameters:
-    """Review every calibration input used by the generator.
-
-    Enter accepts the engine-profile value. This includes idle pocket geometry
-    and MAP band, vacuum endpoint, boost absolute timing limit, boost gain, and
-    limiter/overspeed values.
-    """
+    """Review every calibration input used by the generator."""
     print("— Review / edit engine defaults —")
     print("Enter keeps the value from the selected engine profile.\n")
 
@@ -86,6 +81,15 @@ def prompt_review_engine(spec: EngineParameters) -> EngineParameters:
     cranking_timing=_ask("Cranking timing (deg BTDC)", _num(spec.cranking_timing), cast=float)
     base_timing=_ask("Base / initial timing (deg BTDC)", _num(spec.base_timing), cast=float)
     mech=_ask("Mechanical timing at peak torque (deg BTDC)", _num(spec.mech_timing_at_peak_torque), cast=float)
+
+    p1, p2, p3 = spec.recurve_points
+    print("\n  Recurve")
+    recurve_rpm_1=_ask("Recurve point 1 RPM", _num(p1[0]), cast=float)
+    recurve_timing_1=_ask("Recurve point 1 timing (deg BTDC)", _num(p1[1]), cast=float)
+    recurve_rpm_2=_ask("Recurve point 2 RPM", _num(p2[0]), cast=float)
+    recurve_timing_2=_ask("Recurve point 2 timing (deg BTDC)", _num(p2[1]), cast=float)
+    recurve_rpm_3=_ask("Recurve point 3 RPM", _num(p3[0]), cast=float)
+    recurve_timing_3=_ask("Recurve point 3 timing (deg BTDC)", _num(p3[1]), cast=float)
 
     print("\n  Vacuum")
     vac_map=_ask("Full-vacuum MAP endpoint (kPa abs)", _num(spec.vacuum_full_map_kpa), cast=float)
@@ -121,6 +125,12 @@ def prompt_review_engine(spec: EngineParameters) -> EngineParameters:
         cranking_timing=cranking_timing,
         base_timing=base_timing,
         mech_timing_at_peak_torque=mech,
+        recurve_rpm_1=recurve_rpm_1,
+        recurve_timing_1=recurve_timing_1,
+        recurve_rpm_2=recurve_rpm_2,
+        recurve_timing_2=recurve_timing_2,
+        recurve_rpm_3=recurve_rpm_3,
+        recurve_timing_3=recurve_timing_3,
         vacuum_full_map_kpa=vac_map,
         vacuum_total_timing=vac_total,
         boost_psi=boost_psi,
@@ -136,6 +146,7 @@ def prompt_review_engine(spec: EngineParameters) -> EngineParameters:
         raise ValueError("redline must be greater than idle RPM")
     if out.boost_retard_gain < 0:
         raise ValueError("boost retard gain must be >= 0")
+    validate_recurve(out)
     print("\nFinal calibration:")
     print(describe_spec(out))
     print()
