@@ -13,6 +13,18 @@ It is designed around the behavior of a well-developed distributor-style ignitio
 
 IgnGen includes both a command-line interface and a compact browser/desktop GUI intended to make table generation easy to use standalone and easy to integrate into other tuning applications.
 
+## GUI Preview
+
+![IgnGen generated ignition table](docs/images/igngen-gui.png)
+
+*IgnGen showing the main engine/profile controls and generated ignition timing surface.*
+
+### Advanced calibration options
+
+![IgnGen advanced calibration options](docs/images/igngen-advanced-settings.png)
+
+*Expanded calibration controls for engine landmarks, mechanical timing, vacuum/boost, idle pocket, and limiter/overspeed settings.*
+
 > **Calibration warning**
 >
 > IgnGen generates starting calibration tables, not guaranteed engine-safe prescriptions. Final ignition timing must be verified on the actual engine with appropriate instrumentation, fuel-quality controls, knock monitoring, and dyno/road testing. The user is responsible for the resulting calibration and engine operation.
