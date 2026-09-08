@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from .units import kpa_abs_to_inhg_gauge
-from .v2_engine import (
+from .calibration import (
     EngineParameters,
     build_table,
     generate_load_axis,
