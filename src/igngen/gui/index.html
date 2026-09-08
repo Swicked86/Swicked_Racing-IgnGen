@@ -47,7 +47,7 @@
         <details class="advanced-options">
           <summary>
             <span>Advanced calibration options</span>
-            <small>Engine, timing, boost, idle pocket, limiter</small>
+            <small>Engine, timing, recurve, boost, idle pocket, limiter</small>
           </summary>
           <div class="advanced-body">
             <div class="group-grid">
@@ -70,6 +70,18 @@
                   <label>Cranking timing <span>°BTDC</span><input name="cranking_timing" type="number" step="0.1"></label>
                   <label>Base timing <span>°BTDC</span><input name="base_timing" type="number" step="0.1"></label>
                   <label>Full mechanical <span>°BTDC</span><input name="mech_timing_at_peak_torque" type="number" step="0.1"></label>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>Recurve</legend>
+                <div class="fields">
+                  <label>Point 1 RPM <span>rpm</span><input name="recurve_rpm_1" type="number" step="1"></label>
+                  <label>Point 1 timing <span>°BTDC</span><input name="recurve_timing_1" type="number" step="0.1"></label>
+                  <label>Point 2 RPM <span>rpm</span><input name="recurve_rpm_2" type="number" step="1"></label>
+                  <label>Point 2 timing <span>°BTDC</span><input name="recurve_timing_2" type="number" step="0.1"></label>
+                  <label>Point 3 RPM <span>rpm</span><input name="recurve_rpm_3" type="number" step="1"></label>
+                  <label>Point 3 timing <span>°BTDC</span><input name="recurve_timing_3" type="number" step="0.1"></label>
                 </div>
               </fieldset>
 
