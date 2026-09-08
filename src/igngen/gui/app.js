@@ -61,13 +61,18 @@
   function cellColor(value, min, max) {
     const span = Math.max(1, max - min);
     const t = Math.max(0, Math.min(1, (value - min) / span));
-    if (t < .14) return 'var(--cell0)';
-    if (t < .30) return 'var(--cell1)';
-    if (t < .47) return 'var(--cell2)';
-    if (t < .64) return 'var(--cell3)';
-    if (t < .80) return 'var(--cell4)';
-    if (t < .92) return 'var(--cell5)';
-    return 'var(--cell6)';
+
+    if (t < .08) return 'var(--cell0)';
+    if (t < .17) return 'var(--cell1)';
+    if (t < .26) return 'var(--cell2)';
+    if (t < .35) return 'var(--cell3)';
+    if (t < .44) return 'var(--cell4)';
+    if (t < .54) return 'var(--cell5)';
+    if (t < .64) return 'var(--cell6)';
+    if (t < .74) return 'var(--cell7)';
+    if (t < .84) return 'var(--cell8)';
+    if (t < .93) return 'var(--cell9)';
+    return 'var(--cell10)';
   }
 
   function timingCell(data, rpmIndex, loadIndex, min, max) {
