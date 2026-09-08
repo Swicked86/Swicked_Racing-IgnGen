@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument("--cruise", type=float, default=28.0)
     p_new.add_argument("--wot", type=float, default=18.0)
 
-    # V2 engine/calibration overrides. In interactive mode these are also
+    # Engine/calibration overrides. In interactive mode these are also
     # available in the Review / edit engine defaults step.
     p_new.add_argument("--displacement", type=float)
     p_new.add_argument("--peak-hp", type=float)
@@ -247,7 +247,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 spec = EngineParameters()
 
-            # 2. Review/edit every V2 engine/calibration default.
+            # 2. Review/edit engine/calibration defaults.
             if interactive:
                 spec = prompt_review_engine_v2(spec)
             spec = _apply_v2_overrides(spec, args)
@@ -290,7 +290,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 export = default_export
 
-            # Generate V2 axes. Presets define cell counts/layout conventions;
+            # Generate axes. Presets define cell counts/layout conventions;
             # engine calibration defines where the breakpoints actually belong.
             if args.rpm and args.load:
                 rpm = parse_range(args.rpm)
@@ -310,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
                 rpm=generate_rpm_axis(spec,cols)
                 load=generate_load_axis(spec,rows)
 
-            print("\nV2 generated axes:")
+            print("\nGenerated axes:")
             print(f"  RPM:  {[int(x) for x in rpm]}")
             print(f"  Load: {[int(x) for x in load]} kPa abs")
 
@@ -323,10 +323,10 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 out_path=default_out
 
-            # 7. Generate with the V2 timing model.
+            # 7. Generate with the timing model.
             table=build_table(rpm,load,spec)
             save_table(table,out_path,export=export)
-            print(f"\nWrote {out_path} ({len(load)} load × {len(rpm)} RPM, V2 timing, export={export}, view={layout})")
+            print(f"\nWrote {out_path} ({len(load)} load × {len(rpm)} RPM, timing generated, export={export}, view={layout})")
 
             # 8. Show table (always in interactive mode).
             if args.show or interactive:
