@@ -18,6 +18,7 @@ from .calibration import (
     generate_rpm_axis,
     list_engine_profiles,
     load_engine_profile,
+    validate_recurve,
 )
 
 GUI_DIR = Path(__file__).with_name("gui")
@@ -31,6 +32,9 @@ ATTRIBUTION = {
 
 def _engine_dict(spec: EngineParameters) -> dict[str, Any]:
     data = asdict(spec)
+    for index, (rpm, timing) in enumerate(spec.recurve_points, start=1):
+        data[f"recurve_rpm_{index}"] = rpm
+        data[f"recurve_timing_{index}"] = timing
     data["idle_pocket_lo_rpm"] = spec.idle_pocket_lo_rpm
     data["idle_pocket_hi_rpm"] = spec.idle_pocket_hi_rpm
     data["soft_limit_start_rpm"] = spec.soft_limit_start_rpm
@@ -72,6 +76,7 @@ def _coerce_spec(payload: dict[str, Any]) -> EngineParameters:
         raise ValueError("boost retard gain must be >= 0")
     if spec.vacuum_full_map_kpa >= spec.atm_kpa:
         raise ValueError("full-vacuum MAP must be below atmospheric MAP")
+    validate_recurve(spec)
     return spec
 
 
@@ -139,6 +144,10 @@ def generate_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "load_inhg_gauge": alpha_load_inhg,
         "timing": [[int(round(v)) for v in row] for row in table.values],
         "export_table": _export_payload(table, export_mode, atm_kpa=spec.atm_kpa),
+        "recurve": [
+            {"rpm": int(round(rpm_value)), "timing": round(timing, 2)}
+            for rpm_value, timing in spec.recurve_points
+        ],
         "attribution": ATTRIBUTION,
     }
 
