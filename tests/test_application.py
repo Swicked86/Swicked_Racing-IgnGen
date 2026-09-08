@@ -1,10 +1,13 @@
 from igngen.calibration import (
+    EngineParameters,
     boost_map_fraction,
     build_table,
     generate_load_axis,
     generate_rpm_axis,
     load_engine_profile,
+    mechanical_timing,
     timing_at,
+    validate_recurve,
 )
 
 
@@ -12,6 +15,49 @@ def test_application_loads_boost_gain_from_engine_profile():
     spec = load_engine_profile("d16z6")
     assert spec.boost_retard_gain == 0.6
     assert spec.boost_timing_limit == 20
+
+
+def test_default_recurve_points_preserve_linear_mechanical_curve():
+    spec = EngineParameters(
+        idle_rpm=1000,
+        peak_torque_rpm=5000,
+        base_timing=10,
+        mech_timing_at_peak_torque=34,
+    )
+    validate_recurve(spec)
+    assert spec.recurve_points == ((2000.0, 16.0), (3000.0, 22.0), (4000.0, 28.0))
+    assert mechanical_timing(2000, spec) == 16
+    assert mechanical_timing(3000, spec) == 22
+    assert mechanical_timing(4000, spec) == 28
+
+
+def test_4age_profile_uses_front_loaded_recurve_points():
+    spec = load_engine_profile("4age")
+    assert spec.recurve_points == ((1750.0, 17.0), (2400.0, 23.0), (3500.0, 31.0))
+    assert mechanical_timing(1750, spec) == 17
+    assert mechanical_timing(2400, spec) == 23
+    assert mechanical_timing(3500, spec) == 31
+    assert mechanical_timing(spec.peak_torque_rpm, spec) == 36
+
+
+def test_recurve_can_front_load_or_taper_without_missing_control_points():
+    spec = EngineParameters(
+        idle_rpm=1000,
+        peak_torque_rpm=5000,
+        base_timing=10,
+        mech_timing_at_peak_torque=34,
+        recurve_rpm_1=1800,
+        recurve_timing_1=22,
+        recurve_rpm_2=2800,
+        recurve_timing_2=30,
+        recurve_rpm_3=4000,
+        recurve_timing_3=28,
+    )
+    validate_recurve(spec)
+    assert mechanical_timing(1800, spec) == 22
+    assert mechanical_timing(2800, spec) == 30
+    assert mechanical_timing(4000, spec) == 28
+    assert mechanical_timing(5000, spec) == 34
 
 
 def test_application_boost_curve_uses_mirrored_kpa_gain():
@@ -32,10 +78,9 @@ def test_application_boost_curve_uses_mirrored_kpa_gain():
     assert timing_at(rpm, 250, spec) == 20
 
 
-def test_application_generated_axes_keep_atmosphere_and_idle_structure():
+def test_application_generated_axes_keep_atmosphere_idle_and_recurve_structure():
     spec = load_engine_profile("4age").with_overrides(
         boost_psi=25,
-        idle_rpm=900,
         idle_map_lo=35,
         idle_map_hi=65,
     )
@@ -46,6 +91,7 @@ def test_application_generated_axes_keep_atmosphere_and_idle_structure():
     assert spec.idle_rpm in rpm
     assert spec.peak_torque_rpm in rpm
     assert spec.redline_rpm in rpm
+    assert all(point_rpm in rpm for point_rpm, _ in spec.recurve_points)
     assert len(rpm) == 20
     assert len(load) == 16
 
