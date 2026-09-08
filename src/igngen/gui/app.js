@@ -1,11 +1,14 @@
 (() => {
   const form = document.getElementById('configForm');
   const engineSelect = document.getElementById('engine');
+  const viewMode = document.getElementById('viewMode');
+  const exportMode = document.getElementById('exportMode');
   const tableWrap = document.getElementById('tableWrap');
   const tableMeta = document.getElementById('tableMeta');
   const statusPill = document.getElementById('statusPill');
   const message = document.getElementById('message');
   const generateButton = form.querySelector('.generate');
+  let lastTable = null;
 
   const numericFields = [
     'displacement_cc','peak_hp','peak_hp_rpm','peak_torque_lbft','peak_torque_rpm','redline_rpm',
@@ -47,9 +50,9 @@
 
   function buildPayload() {
     const data = new FormData(form);
-    const payload = {engine: engineSelect.value};
+    const payload = {engine: engineSelect.value, view: viewMode.value, export: exportMode.value};
     for (const [key, value] of data.entries()) {
-      if (key === 'engine') continue;
+      if (key === 'engine' || key === 'view' || key === 'export') continue;
       if (value !== '') payload[key] = Number(value);
     }
     return payload;
@@ -67,14 +70,34 @@
     return 'var(--cell6)';
   }
 
-  function renderTable(data) {
-    const values = data.timing.flat();
-    const min = Math.min(...values);
-    const max = Math.max(...values);
+  function timingCell(data, rpmIndex, loadIndex, min, max) {
+    const value = data.timing[rpmIndex][loadIndex];
+    const td = document.createElement('td');
+    td.className = 'timing' + (Math.abs(data.load_kpa[loadIndex] - 100) < .51 ? ' atm' : '');
+    td.textContent = value;
+    td.style.background = cellColor(value, min, max);
+    td.title = `${data.rpm[rpmIndex]} RPM / ${data.load_kpa[loadIndex]} kPa = ${value}° BTDC`;
+    return td;
+  }
+
+  function renderDefault(data, min, max) {
+    const table = document.createElement('table');
+    table.className = 'default-view';
+    const tbody = document.createElement('tbody');
     const loadOrder = [...data.load_kpa.keys()].reverse();
 
-    const table = document.createElement('table');
-    const thead = document.createElement('thead');
+    loadOrder.forEach(loadIndex => {
+      const tr = document.createElement('tr');
+      const loadCell = document.createElement('td');
+      loadCell.className = 'load';
+      loadCell.textContent = data.load_kpa[loadIndex];
+      tr.appendChild(loadCell);
+      data.rpm.forEach((_, rpmIndex) => tr.appendChild(timingCell(data, rpmIndex, loadIndex, min, max)));
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+
+    const tfoot = document.createElement('tfoot');
     const hr = document.createElement('tr');
     const first = document.createElement('th');
     first.className = 'load-head';
@@ -85,30 +108,51 @@
       th.textContent = rpm;
       hr.appendChild(th);
     });
+    tfoot.appendChild(hr);
+    table.appendChild(tfoot);
+    return table;
+  }
+
+  function renderAlpha(data, min, max) {
+    const table = document.createElement('table');
+    table.className = 'alpha-view';
+    const thead = document.createElement('thead');
+    const hr = document.createElement('tr');
+    const first = document.createElement('th');
+    first.className = 'load-head';
+    first.textContent = 'RPM/kPa';
+    hr.appendChild(first);
+    data.load_kpa.forEach(load => {
+      const th = document.createElement('th');
+      th.textContent = load;
+      if (Math.abs(load - 100) < .51) th.classList.add('atm-head');
+      hr.appendChild(th);
+    });
     thead.appendChild(hr);
     table.appendChild(thead);
 
     const tbody = document.createElement('tbody');
-    loadOrder.forEach(loadIndex => {
+    data.rpm.forEach((rpm, rpmIndex) => {
       const tr = document.createElement('tr');
-      const loadCell = document.createElement('td');
-      loadCell.className = 'load';
-      loadCell.textContent = data.load_kpa[loadIndex];
-      tr.appendChild(loadCell);
-      data.rpm.forEach((_, rpmIndex) => {
-        const value = data.timing[rpmIndex][loadIndex];
-        const td = document.createElement('td');
-        td.className = 'timing' + (Math.abs(data.load_kpa[loadIndex] - 100) < .51 ? ' atm' : '');
-        td.textContent = value;
-        td.style.background = cellColor(value, min, max);
-        td.title = `${data.rpm[rpmIndex]} RPM / ${data.load_kpa[loadIndex]} kPa = ${value}° BTDC`;
-        tr.appendChild(td);
-      });
+      const rpmCell = document.createElement('td');
+      rpmCell.className = 'load';
+      rpmCell.textContent = rpm;
+      tr.appendChild(rpmCell);
+      data.load_kpa.forEach((_, loadIndex) => tr.appendChild(timingCell(data, rpmIndex, loadIndex, min, max)));
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
+    return table;
+  }
+
+  function renderTable(data) {
+    const values = data.timing.flat();
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const mode = viewMode.value || 'default';
+    const table = mode === 'alpha' ? renderAlpha(data, min, max) : renderDefault(data, min, max);
     tableWrap.replaceChildren(table);
-    tableMeta.textContent = `${data.engine} · ${data.load_kpa.length} load × ${data.rpm.length} RPM · ${min}°…${max}° BTDC`;
+    tableMeta.textContent = `${data.engine} · ${data.load_kpa.length} load × ${data.rpm.length} RPM · ${min}°…${max}° BTDC · view=${mode} · export=${exportMode.value}`;
   }
 
   async function generate(event) {
@@ -124,6 +168,7 @@
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Generation failed');
+      lastTable = data;
       renderTable(data);
       message.textContent = `Generated ${data.schema}. 100 kPa crossover is outlined in cyan.`;
       setStatus('GENERATED', 'ready');
@@ -138,6 +183,8 @@
   async function init() {
     form.addEventListener('submit', generate);
     engineSelect.addEventListener('change', () => loadEngine(engineSelect.value));
+    viewMode.addEventListener('change', () => { if (lastTable) renderTable(lastTable); });
+    exportMode.addEventListener('change', () => { if (lastTable) renderTable(lastTable); });
     try {
       const response = await fetch('/api/engines', {cache:'no-store'});
       const data = await response.json();
