@@ -175,6 +175,28 @@ igngen new \
   --show
 ```
 
+Generate and export directly to a CSV file:
+
+```bash
+igngen new \
+  --engine D16Z6 \
+  --preset base \
+  --export default \
+  --out d16z6-ignition.csv
+```
+
+Generate an Alpha-oriented CSV with RPM rows and load columns:
+
+```bash
+igngen new \
+  --engine 4age \
+  --preset alpha \
+  --export alpha \
+  --out 4age-alpha-ignition.csv
+```
+
+`--out` selects the output filename. A `.csv` filename writes CSV. `--export default` writes load rows with RPM columns; `--export alpha` writes RPM rows with load columns.
+
 Example boosted generation:
 
 ```bash
@@ -182,6 +204,7 @@ igngen new \
   --engine 4age \
   --boost-psi 12 \
   --boost-retard-gain 0.60 \
+  --out 4age-12psi.csv \
   --show
 ```
 
