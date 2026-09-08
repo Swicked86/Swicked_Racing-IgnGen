@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from .presets import PRESETS
+from .units import kpa_abs_to_inhg_gauge
 from .v2_engine import (
     EngineParameters,
     build_table,
@@ -75,23 +75,30 @@ def _coerce_spec(payload: dict[str, Any]) -> EngineParameters:
     return spec
 
 
-def _export_payload(table, export_mode: str) -> dict[str, Any]:
+def _alpha_load_axis(table, atm_kpa: float) -> list[float]:
+    return [round(kpa_abs_to_inhg_gauge(float(v), atm_kpa), 2) for v in table.load]
+
+
+def _export_payload(table, export_mode: str, *, atm_kpa: float) -> dict[str, Any]:
     """Return the selected external row/column orientation without changing canonical data."""
     if export_mode == "alpha":
+        load_inhg = _alpha_load_axis(table, atm_kpa)
         return {
             "format": "alpha",
             "row_axis": "rpm",
-            "column_axis": "load_kpa",
+            "column_axis": "load_inhg_gauge",
+            "units": {"row": "rpm", "column": "inHg_gauge", "timing": "deg_BTDC"},
             "rows": [
                 [int(round(table.rpm[i])), *[int(round(v)) for v in table.values[i]]]
                 for i in range(len(table.rpm))
             ],
-            "columns": ["rpm", *[int(round(v)) for v in table.load]],
+            "columns": ["rpm", *load_inhg],
         }
     return {
         "format": "default",
         "row_axis": "load_kpa",
         "column_axis": "rpm",
+        "units": {"row": "kPa_abs", "column": "rpm", "timing": "deg_BTDC"},
         "rows": [
             [int(round(table.load[j])), *[int(round(table.values[i][j])) for i in range(len(table.rpm))]]
             for j in range(len(table.load))
@@ -103,10 +110,9 @@ def _export_payload(table, export_mode: str) -> dict[str, Any]:
 def generate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Public integration boundary: calibration inputs -> generated table JSON.
 
-    Host applications can call this directly from Python or reproduce the same
-    request shape over the local GUI HTTP endpoint at POST /api/generate.
-    Canonical table data is always returned in RPM-major form; ``export_table``
-    provides the requested external orientation for host import/export workflows.
+    Canonical table data remains kPa absolute and RPM-major. Alpha view/export
+    receives an additional ALPHAlink-style inHg gauge load axis where 0 inHg is
+    the atmospheric crossover, vacuum is negative, and boost is positive.
     """
     spec = _coerce_spec(payload)
     rows = max(6, min(64, int(payload.get("load_cells", 16))))
@@ -121,6 +127,7 @@ def generate_payload(payload: dict[str, Any]) -> dict[str, Any]:
     rpm = generate_rpm_axis(spec, cols)
     load = generate_load_axis(spec, rows)
     table = build_table(rpm, load, spec)
+    alpha_load_inhg = _alpha_load_axis(table, spec.atm_kpa)
     return {
         "schema": "igngen.table.v1",
         "engine": spec.name,
@@ -129,8 +136,9 @@ def generate_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "units": {"rpm": "rpm", "load": "kPa_abs", "timing": "deg_BTDC"},
         "rpm": [int(round(v)) for v in table.rpm],
         "load_kpa": [int(round(v)) for v in table.load],
+        "load_inhg_gauge": alpha_load_inhg,
         "timing": [[int(round(v)) for v in row] for row in table.values],
-        "export_table": _export_payload(table, export_mode),
+        "export_table": _export_payload(table, export_mode, atm_kpa=spec.atm_kpa),
         "attribution": ATTRIBUTION,
     }
 
