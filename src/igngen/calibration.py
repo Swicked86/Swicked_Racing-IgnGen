@@ -11,6 +11,7 @@ BAR_TO_PSI = 14.5037738
 KPA_PER_PSI = 6.895
 RPM_STEPS = (50, 100, 250, 500, 1000)
 MAP_STEPS = (5, 10, 20, 25, 50)
+RECURVE_DEFAULT_FRACTIONS = (0.25, 0.50, 0.75)
 
 
 @dataclass
@@ -36,6 +37,12 @@ class EngineParameters:
     cranking_timing: float = 10.0
     base_timing: float = 15.0
     mech_timing_at_peak_torque: float = 36.0
+    recurve_rpm_1: float | None = None
+    recurve_timing_1: float | None = None
+    recurve_rpm_2: float | None = None
+    recurve_timing_2: float | None = None
+    recurve_rpm_3: float | None = None
+    recurve_timing_3: float | None = None
     vacuum_total_timing: float = 50.0
     vacuum_full_map_kpa: float = 40.0
     boost_timing_limit: float = 20.0
@@ -74,6 +81,27 @@ class EngineParameters:
     @property
     def max_boost_map_kpa(self) -> float:
         return self.atm_kpa + max(0.0, self.boost_psi) * KPA_PER_PSI
+
+    @property
+    def recurve_points(self) -> tuple[tuple[float, float], tuple[float, float], tuple[float, float]]:
+        """Return the three user-facing mechanical recurve knots.
+
+        Missing profile values resolve to collinear 25/50/75% points, which
+        preserves the original straight-line mechanical advance curve.
+        """
+        rpm_span = max(self.peak_torque_rpm - self.idle_rpm, 1.0)
+        timing_span = self.mech_timing_at_peak_torque - self.base_timing
+        raw = (
+            (self.recurve_rpm_1, self.recurve_timing_1),
+            (self.recurve_rpm_2, self.recurve_timing_2),
+            (self.recurve_rpm_3, self.recurve_timing_3),
+        )
+        points: list[tuple[float, float]] = []
+        for fraction, (rpm, timing) in zip(RECURVE_DEFAULT_FRACTIONS, raw):
+            resolved_rpm = self.idle_rpm + rpm_span * fraction if rpm is None else float(rpm)
+            resolved_timing = self.base_timing + timing_span * fraction if timing is None else float(timing)
+            points.append((resolved_rpm, resolved_timing))
+        return points[0], points[1], points[2]
 
     def derived_idle_targets(self) -> tuple[float, float, float]:
         target = float(self.idle_timing_target)
@@ -128,6 +156,7 @@ def load_engine_profile(path_or_name: str | Path) -> EngineParameters:
     profile = parser["profile"] if parser.has_section("profile") else {}
     engine = parser["engine"] if parser.has_section("engine") else {}
     mechanical = parser["mechanical"] if parser.has_section("mechanical") else {}
+    recurve = parser["recurve"] if parser.has_section("recurve") else {}
     vacuum = parser["vacuum"] if parser.has_section("vacuum") else {}
     boost = parser["boost"] if parser.has_section("boost") else {}
     idle = parser["idle"] if parser.has_section("idle") else {}
@@ -136,6 +165,9 @@ def load_engine_profile(path_or_name: str | Path) -> EngineParameters:
 
     def num(section, key: str, default: float) -> float:
         return float(section.get(key)) if key in section else float(default)
+
+    def optional_num(section, key: str) -> float | None:
+        return float(section.get(key)) if key in section else None
 
     if "boost_psi" in engine:
         boost_psi = float(engine.get("boost_psi"))
@@ -152,7 +184,7 @@ def load_engine_profile(path_or_name: str | Path) -> EngineParameters:
         else d.boost_timing_limit
     )
 
-    return EngineParameters(
+    spec = EngineParameters(
         name=str(profile.get("name", path.stem)),
         description=str(profile.get("description", path.stem)),
         displacement_cc=num(engine, "displacement_cc", d.displacement_cc),
@@ -174,6 +206,12 @@ def load_engine_profile(path_or_name: str | Path) -> EngineParameters:
         cranking_timing=num(mechanical, "cranking_timing", d.cranking_timing),
         base_timing=num(mechanical, "base_timing", d.base_timing),
         mech_timing_at_peak_torque=num(mechanical, "mech_timing_at_peak_torque", d.mech_timing_at_peak_torque),
+        recurve_rpm_1=optional_num(recurve, "point1_rpm"),
+        recurve_timing_1=optional_num(recurve, "point1_timing"),
+        recurve_rpm_2=optional_num(recurve, "point2_rpm"),
+        recurve_timing_2=optional_num(recurve, "point2_timing"),
+        recurve_rpm_3=optional_num(recurve, "point3_rpm"),
+        recurve_timing_3=optional_num(recurve, "point3_timing"),
         vacuum_total_timing=num(vacuum, "vacuum_total_timing", d.vacuum_total_timing),
         vacuum_full_map_kpa=num(vacuum, "vacuum_full_map_kpa", d.vacuum_full_map_kpa),
         boost_timing_limit=boost_limit,
@@ -184,18 +222,84 @@ def load_engine_profile(path_or_name: str | Path) -> EngineParameters:
         atm_kpa=num(engine, "atm_kpa", d.atm_kpa),
         map_floor_kpa=num(engine, "map_floor_kpa", d.map_floor_kpa),
     )
+    validate_recurve(spec)
+    return spec
 
 
 def clamp01(v: float) -> float:
     return max(0.0, min(1.0, v))
 
 
-def mechanical_progress(rpm: float, spec: EngineParameters) -> float:
-    if rpm <= spec.idle_rpm:
-        return 0.0
-    if rpm >= spec.peak_torque_rpm:
-        return 1.0
-    return clamp01((rpm - spec.idle_rpm) / max(spec.peak_torque_rpm - spec.idle_rpm, 1.0))
+def validate_recurve(spec: EngineParameters) -> None:
+    points = spec.recurve_points
+    rpms = [p[0] for p in points]
+    timings = [p[1] for p in points]
+    if not (spec.idle_rpm < rpms[0] < rpms[1] < rpms[2] < spec.peak_torque_rpm):
+        raise ValueError("recurve RPM points must increase strictly between idle RPM and peak torque RPM")
+    if not all(math.isfinite(v) for v in (*rpms, *timings)):
+        raise ValueError("recurve points must be finite numbers")
+
+
+def _pchip_slopes(xs: list[float], ys: list[float]) -> list[float]:
+    """Shape-preserving cubic slopes (Fritsch-Carlson/PCHIP style)."""
+    n = len(xs)
+    if n == 2:
+        slope = (ys[1] - ys[0]) / (xs[1] - xs[0])
+        return [slope, slope]
+
+    h = [xs[i + 1] - xs[i] for i in range(n - 1)]
+    delta = [(ys[i + 1] - ys[i]) / h[i] for i in range(n - 1)]
+    d = [0.0] * n
+
+    for i in range(1, n - 1):
+        if delta[i - 1] == 0.0 or delta[i] == 0.0 or delta[i - 1] * delta[i] <= 0.0:
+            d[i] = 0.0
+        else:
+            w1 = 2.0 * h[i] + h[i - 1]
+            w2 = h[i] + 2.0 * h[i - 1]
+            d[i] = (w1 + w2) / (w1 / delta[i - 1] + w2 / delta[i])
+
+    d0 = ((2.0 * h[0] + h[1]) * delta[0] - h[0] * delta[1]) / (h[0] + h[1])
+    if d0 * delta[0] <= 0.0:
+        d0 = 0.0
+    elif delta[0] * delta[1] < 0.0 and abs(d0) > abs(3.0 * delta[0]):
+        d0 = 3.0 * delta[0]
+    d[0] = d0
+
+    dn = ((2.0 * h[-1] + h[-2]) * delta[-1] - h[-1] * delta[-2]) / (h[-1] + h[-2])
+    if dn * delta[-1] <= 0.0:
+        dn = 0.0
+    elif delta[-1] * delta[-2] < 0.0 and abs(dn) > abs(3.0 * delta[-1]):
+        dn = 3.0 * delta[-1]
+    d[-1] = dn
+    return d
+
+
+def _pchip_interpolate(x: float, xs: list[float], ys: list[float]) -> float:
+    if x <= xs[0]:
+        return ys[0]
+    if x >= xs[-1]:
+        return ys[-1]
+    slopes = _pchip_slopes(xs, ys)
+    i = 0
+    while i + 1 < len(xs) and x > xs[i + 1]:
+        i += 1
+    h = xs[i + 1] - xs[i]
+    t = (x - xs[i]) / h
+    h00 = 2.0 * t**3 - 3.0 * t**2 + 1.0
+    h10 = t**3 - 2.0 * t**2 + t
+    h01 = -2.0 * t**3 + 3.0 * t**2
+    h11 = t**3 - t**2
+    return h00 * ys[i] + h10 * h * slopes[i] + h01 * ys[i + 1] + h11 * h * slopes[i + 1]
+
+
+def mechanical_curve_points(spec: EngineParameters) -> list[tuple[float, float]]:
+    validate_recurve(spec)
+    return [
+        (float(spec.idle_rpm), float(spec.base_timing)),
+        *[(float(r), float(t)) for r, t in spec.recurve_points],
+        (float(spec.peak_torque_rpm), float(spec.mech_timing_at_peak_torque)),
+    ]
 
 
 def mechanical_timing(rpm: float, spec: EngineParameters) -> float:
@@ -205,8 +309,19 @@ def mechanical_timing(rpm: float, spec: EngineParameters) -> float:
         return float(spec.base_timing)
     if rpm >= spec.peak_torque_rpm:
         return float(spec.mech_timing_at_peak_torque)
-    p = mechanical_progress(rpm, spec)
-    return spec.base_timing + (spec.mech_timing_at_peak_torque - spec.base_timing) * p
+    points = mechanical_curve_points(spec)
+    return _pchip_interpolate(rpm, [p[0] for p in points], [p[1] for p in points])
+
+
+def mechanical_progress(rpm: float, spec: EngineParameters) -> float:
+    if rpm <= spec.idle_rpm:
+        return 0.0
+    if rpm >= spec.peak_torque_rpm:
+        return 1.0
+    span = spec.mech_timing_at_peak_torque - spec.base_timing
+    if abs(span) < 1e-9:
+        return clamp01((rpm - spec.idle_rpm) / max(spec.peak_torque_rpm - spec.idle_rpm, 1.0))
+    return clamp01((mechanical_timing(rpm, spec) - spec.base_timing) / span)
 
 
 def pressure_span_kpa(spec: EngineParameters) -> float:
@@ -300,33 +415,64 @@ def _fill_interval(lo: float, hi: float, count: int, protected: set[float]) -> l
     out = []
     for ideal in ideals:
         c = min(available, key=lambda x: (abs(x - ideal), x))
-        out.append(c); available.remove(c)
+        out.append(c)
+        available.remove(c)
     return sorted(out)
 
 
 def generate_rpm_axis(spec: EngineParameters, count: int) -> list[float]:
-    anchors = _unique([spec.cranking_rpm, spec.idle_pocket_lo_rpm, spec.idle_rpm, spec.idle_pocket_hi_rpm, spec.peak_torque_rpm, spec.soft_limit_start_rpm, spec.redline_rpm, spec.overspeed_rpm])
+    recurve_rpms = [p[0] for p in spec.recurve_points]
+    anchors = _unique([
+        spec.cranking_rpm,
+        spec.idle_pocket_lo_rpm,
+        spec.idle_rpm,
+        spec.idle_pocket_hi_rpm,
+        *recurve_rpms,
+        spec.peak_torque_rpm,
+        spec.soft_limit_start_rpm,
+        spec.redline_rpm,
+        spec.overspeed_rpm,
+    ])
     if count < 2:
         raise ValueError("RPM axis requires at least 2 cells")
     if len(anchors) > count:
-        priority = [spec.cranking_rpm, spec.idle_rpm, spec.idle_pocket_hi_rpm, spec.peak_torque_rpm, spec.soft_limit_start_rpm, spec.redline_rpm, spec.overspeed_rpm, spec.idle_pocket_lo_rpm]
+        priority = [
+            spec.cranking_rpm,
+            spec.idle_rpm,
+            *recurve_rpms,
+            spec.peak_torque_rpm,
+            spec.soft_limit_start_rpm,
+            spec.redline_rpm,
+            spec.overspeed_rpm,
+            spec.idle_pocket_hi_rpm,
+            spec.idle_pocket_lo_rpm,
+        ]
         return sorted(_unique(priority)[:count])
-    result = list(anchors); protected = set(result); remaining = count - len(result)
+    result = list(anchors)
+    protected = set(result)
+    remaining = count - len(result)
     hp = float(round(spec.peak_hp_rpm))
     if remaining > 0 and spec.peak_torque_rpm < hp < spec.overspeed_rpm and hp not in protected:
-        result.append(hp); protected.add(hp); remaining -= 1
-    pre_n = int(round(remaining * 2 / 3)); post_n = remaining - pre_n
+        result.append(hp)
+        protected.add(hp)
+        remaining -= 1
+    pre_n = int(round(remaining * 2 / 3))
+    post_n = remaining - pre_n
     pre = _fill_interval(spec.idle_pocket_hi_rpm, spec.peak_torque_rpm, pre_n, protected)
-    result.extend(pre); protected.update(pre)
+    result.extend(pre)
+    protected.update(pre)
     result.extend(_fill_interval(spec.peak_torque_rpm, spec.overspeed_rpm, post_n, protected))
     result = _unique(result)
     while len(result) < count:
-        gaps = sorted(((result[i+1]-result[i], i) for i in range(len(result)-1)), reverse=True)
+        gaps = sorted(((result[i + 1] - result[i], i) for i in range(len(result) - 1)), reverse=True)
         placed = False
         for _, i in gaps:
-            c = _fill_interval(result[i], result[i+1], 1, set(result))
+            c = _fill_interval(result[i], result[i + 1], 1, set(result))
             if c:
-                result.append(c[0]); result = _unique(result); placed = True; break
+                result.append(c[0])
+                result = _unique(result)
+                placed = True
+                break
         if not placed:
             break
     if len(result) != count:
@@ -344,74 +490,121 @@ def _nice_map_step(span: float, count: int) -> int:
 
 
 def _ladder(lo: float, hi: float, step: int) -> list[float]:
-    start = int(math.ceil(lo / step) * step); end = int(math.floor(hi / step) * step)
+    start = int(math.ceil(lo / step) * step)
+    end = int(math.floor(hi / step) * step)
     return [] if end < start else [float(v) for v in range(start, end + 1, step)]
 
 
 def _select_evenly(candidates: list[float], count: int) -> list[float]:
     values = sorted(set(candidates))
-    if count <= 0: return []
-    if len(values) <= count: return values
-    if count == 1: return [values[len(values)//2]]
-    out=[]; avail=set(values)
-    for ideal in [i*(len(values)-1)/(count-1) for i in range(count)]:
-        target=values[int(round(ideal))]; c=min(avail,key=lambda x:(abs(x-target),x)); out.append(c); avail.remove(c)
+    if count <= 0:
+        return []
+    if len(values) <= count:
+        return values
+    if count == 1:
+        return [values[len(values) // 2]]
+    out = []
+    avail = set(values)
+    for ideal in [i * (len(values) - 1) / (count - 1) for i in range(count)]:
+        target = values[int(round(ideal))]
+        c = min(avail, key=lambda x: (abs(x - target), x))
+        out.append(c)
+        avail.remove(c)
     return sorted(out)
 
 
 def generate_load_axis(spec: EngineParameters, count: int) -> list[float]:
-    if count < 2: raise ValueError("load axis requires at least 2 cells")
-    atm=float(round(spec.atm_kpa)); lo=float(round(spec.idle_map_lo)); hi=float(round(spec.idle_map_hi))
-    if hi < lo: lo,hi=hi,lo
-    mid=float(round((lo+hi)/2)); decel=_decel_anchor(spec); boosted=spec.boost_psi>0
+    if count < 2:
+        raise ValueError("load axis requires at least 2 cells")
+    atm = float(round(spec.atm_kpa))
+    lo = float(round(spec.idle_map_lo))
+    hi = float(round(spec.idle_map_hi))
+    if hi < lo:
+        lo, hi = hi, lo
+    mid = float(round((lo + hi) / 2))
+    decel = _decel_anchor(spec)
+    boosted = spec.boost_psi > 0
     if boosted:
-        span=max(spec.max_boost_map_kpa-atm,1); step=_nice_map_step(span,max(3,count//3)); maxb=float(int(round(spec.max_boost_map_kpa/step)*step)); maxb=max(maxb,atm+step); over=maxb+step
+        span = max(spec.max_boost_map_kpa - atm, 1)
+        step = _nice_map_step(span, max(3, count // 3))
+        maxb = float(int(round(spec.max_boost_map_kpa / step) * step))
+        maxb = max(maxb, atm + step)
+        over = maxb + step
     else:
-        step=5; maxb=atm; over=atm+5
-    result=[]
-    for v in [decel,lo,mid,hi,atm]+([maxb,over] if boosted else [over]):
-        v=float(round(v))
-        if v not in result: result.append(v)
-        if len(result)==count: return sorted(result)
-    result=_unique(result); remaining=count-len(result); upper=max(hi,decel); na_span=max(atm-upper,1)
-    if remaining>0:
+        step = 5
+        maxb = atm
+        over = atm + 5
+    result = []
+    for v in [decel, lo, mid, hi, atm] + ([maxb, over] if boosted else [over]):
+        v = float(round(v))
+        if v not in result:
+            result.append(v)
+        if len(result) == count:
+            return sorted(result)
+    result = _unique(result)
+    remaining = count - len(result)
+    upper = max(hi, decel)
+    na_span = max(atm - upper, 1)
+    if remaining > 0:
         if boosted:
-            bspan=max(maxb-atm,1); na_n=max(0,min(remaining,int(round(remaining*na_span/(na_span+0.65*bspan))))); b_n=remaining-na_n
-        else: na_n=remaining; b_n=0
-        na_step=_nice_map_step(na_span,max(na_n+2,2)); c=[v for v in _ladder(upper,atm,na_step) if upper<v<atm and v not in result]; result.extend(_select_evenly(c,na_n))
-        if boosted and b_n>0:
-            c=[v for v in _ladder(atm,maxb,step) if atm<v<maxb and v not in result]; result.extend(_select_evenly(c,b_n))
-    result=_unique(result)
-    for refine in (5,2,1):
-        if len(result)>=count: break
-        c=[v for v in _ladder(hi,over,refine) if v not in result and hi<v<over]
-        while len(result)<count and c:
-            scored=[]
+            bspan = max(maxb - atm, 1)
+            na_n = max(0, min(remaining, int(round(remaining * na_span / (na_span + 0.65 * bspan)))))
+            b_n = remaining - na_n
+        else:
+            na_n = remaining
+            b_n = 0
+        na_step = _nice_map_step(na_span, max(na_n + 2, 2))
+        c = [v for v in _ladder(upper, atm, na_step) if upper < v < atm and v not in result]
+        result.extend(_select_evenly(c, na_n))
+        if boosted and b_n > 0:
+            c = [v for v in _ladder(atm, maxb, step) if atm < v < maxb and v not in result]
+            result.extend(_select_evenly(c, b_n))
+    result = _unique(result)
+    for refine in (5, 2, 1):
+        if len(result) >= count:
+            break
+        c = [v for v in _ladder(hi, over, refine) if v not in result and hi < v < over]
+        while len(result) < count and c:
+            scored = []
             for x in c:
-                lower=max((v for v in result if v<x),default=result[0]); upper2=min((v for v in result if v>x),default=result[-1]); scored.append((upper2-lower,x))
-            _,x=max(scored,key=lambda z:(z[0],-z[1])); result.append(x); result=_unique(result); c.remove(x)
-    if len(result)!=count: raise ValueError(f"could not create {count} unique load cells; generated {len(result)}")
-    if atm not in result: raise AssertionError("atmosphere crossover was lost from load axis")
+                lower = max((v for v in result if v < x), default=result[0])
+                upper2 = min((v for v in result if v > x), default=result[-1])
+                scored.append((upper2 - lower, x))
+            _, x = max(scored, key=lambda z: (z[0], -z[1]))
+            result.append(x)
+            result = _unique(result)
+            c.remove(x)
+    if len(result) != count:
+        raise ValueError(f"could not create {count} unique load cells; generated {len(result)}")
+    if atm not in result:
+        raise AssertionError("atmosphere crossover was lost from load axis")
     return result
 
 
 def build_table(rpm: list[float], load: list[float], spec: EngineParameters) -> TimingTable:
-    values=[[float(round(timing_at(r,m,spec))) for m in load] for r in rpm]
-    return TimingTable(rpm=[float(round(x)) for x in rpm], load=[float(round(x)) for x in load], values=values, load_unit="kPa")
+    values = [[float(round(timing_at(r, m, spec))) for m in load] for r in rpm]
+    return TimingTable(
+        rpm=[float(round(x)) for x in rpm],
+        load=[float(round(x)) for x in load],
+        values=values,
+        load_unit="kPa",
+    )
 
 
 def describe_spec(spec: EngineParameters) -> str:
-    catch,target,upper=spec.derived_idle_targets()
-    span=pressure_span_kpa(spec)
-    boost_note="off"
-    if spec.boost_psi>0:
-        full=spec.atm_kpa + span/spec.boost_retard_gain if spec.boost_retard_gain>0 else float("inf")
-        boost_note=f"{spec.boost_psi:g} psi, limit {spec.boost_timing_limit:g}°, gain {spec.boost_retard_gain:g}, full limit ~{full:.0f} kPa"
+    catch, target, upper = spec.derived_idle_targets()
+    span = pressure_span_kpa(spec)
+    boost_note = "off"
+    if spec.boost_psi > 0:
+        full = spec.atm_kpa + span / spec.boost_retard_gain if spec.boost_retard_gain > 0 else float("inf")
+        boost_note = f"{spec.boost_psi:g} psi, limit {spec.boost_timing_limit:g}°, gain {spec.boost_retard_gain:g}, full limit ~{full:.0f} kPa"
+    recurve_note = ", ".join(f"{rpm:g}@{timing:g}°" for rpm, timing in spec.recurve_points)
     return (
         f"Engine: {spec.name} — {spec.description}\n"
         f"  {spec.displacement_cc:g} cc; peak HP {spec.peak_hp:g}@{spec.peak_hp_rpm:g}; peak torque {spec.peak_torque_lbft:g}@{spec.peak_torque_rpm:g}; redline {spec.redline_rpm:g}\n"
         f"  Idle: {spec.idle_rpm:g} RPM; pocket {spec.idle_pocket_lo_rpm:g}/{spec.idle_rpm:g}/{spec.idle_pocket_hi_rpm:g} RPM = {catch:g}/{target:g}/{upper:g}°; MAP {spec.idle_map_lo:g}-{spec.idle_map_hi:g} kPa\n"
         f"  Mechanical: crank {spec.cranking_timing:g}°@{spec.cranking_rpm:g}; base {spec.base_timing:g}°; full {spec.mech_timing_at_peak_torque:g}°@{spec.peak_torque_rpm:g}\n"
+        f"  Recurve: {recurve_note}\n"
         f"  Vacuum: total {spec.vacuum_total_timing:g}° at <= {spec.vacuum_full_map_kpa:g} kPa\n"
         f"  Boost: {boost_note}\n"
         f"  Limiter: soft starts {spec.soft_limit_start_rpm:g}; retard {spec.soft_limit_retard:g}°; overspeed axis {spec.overspeed_rpm:g} RPM"
