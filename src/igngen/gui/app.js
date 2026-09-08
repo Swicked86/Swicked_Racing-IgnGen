@@ -170,7 +170,7 @@
     event.preventDefault();
     generateButton.disabled = true;
     setStatus('GENERATING', 'busy');
-    message.textContent = 'Generating V2 ignition surface…';
+    message.textContent = 'Generating ignition surface…';
     try {
       const response = await fetch('/api/generate', {
         method:'POST',
