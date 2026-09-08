@@ -26,6 +26,7 @@ from .calibration import (
     generate_rpm_axis,
     list_engine_profiles,
     load_engine_profile,
+    validate_recurve,
 )
 
 _LAYOUTS = ("default", "alpha")
@@ -65,6 +66,12 @@ def _apply_overrides(spec: EngineParameters, args: argparse.Namespace) -> Engine
         "boost_psi": args.boost_psi,
         "base_timing": args.base_timing,
         "mech_timing_at_peak_torque": args.mech_at_peak_torque,
+        "recurve_rpm_1": args.recurve1_rpm,
+        "recurve_timing_1": args.recurve1_timing,
+        "recurve_rpm_2": args.recurve2_rpm,
+        "recurve_timing_2": args.recurve2_timing,
+        "recurve_rpm_3": args.recurve3_rpm,
+        "recurve_timing_3": args.recurve3_timing,
         "idle_rpm": args.idle_rpm,
         "idle_pocket_width": args.idle_pocket_width,
         "idle_pocket_lower_share": args.idle_pocket_lower_share,
@@ -97,12 +104,10 @@ def _validate(spec: EngineParameters) -> None:
         raise ValueError("boost retard gain must be >= 0")
     if spec.vacuum_full_map_kpa >= spec.atm_kpa:
         raise ValueError("full-vacuum MAP must be below atmospheric MAP")
+    validate_recurve(spec)
 
 
 def main(argv: list[str] | None = None) -> int:
-    # Bare `igngen` is the normal interactive workflow, equivalent to
-    # `igngen new`. Explicit subcommands and global options keep their normal
-    # argparse behavior.
     if argv is None:
         argv = sys.argv[1:]
     if not argv:
@@ -130,8 +135,6 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument("--cruise", type=float, default=28.0)
     p_new.add_argument("--wot", type=float, default=18.0)
 
-    # Engine/calibration overrides. In interactive mode these are also
-    # available in the Review / edit engine defaults step.
     p_new.add_argument("--displacement", type=float)
     p_new.add_argument("--peak-hp", type=float)
     p_new.add_argument("--peak-hp-rpm", type=float)
@@ -141,6 +144,12 @@ def main(argv: list[str] | None = None) -> int:
     p_new.add_argument("--boost-psi", type=float)
     p_new.add_argument("--base-timing", type=float)
     p_new.add_argument("--mech-at-peak-torque", type=float)
+    p_new.add_argument("--recurve1-rpm", type=float)
+    p_new.add_argument("--recurve1-timing", type=float)
+    p_new.add_argument("--recurve2-rpm", type=float)
+    p_new.add_argument("--recurve2-timing", type=float)
+    p_new.add_argument("--recurve3-rpm", type=float)
+    p_new.add_argument("--recurve3-timing", type=float)
     p_new.add_argument("--idle-rpm", type=float)
     p_new.add_argument("--idle-pocket-width", type=float)
     p_new.add_argument("--idle-pocket-lower-share", type=float)
@@ -237,7 +246,6 @@ def main(argv: list[str] | None = None) -> int:
                     print(table.format_grid(layout=args.layout or "default", color=True))
                 return 0
 
-            # 1. Select engine.
             if args.engine:
                 spec = load_engine_profile(args.engine)
                 print(describe_spec(spec))
@@ -247,13 +255,11 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 spec = EngineParameters()
 
-            # 2. Review/edit engine/calibration defaults.
             if interactive:
                 spec = prompt_review_engine(spec)
             spec = _apply_overrides(spec, args)
             _validate(spec)
 
-            # 3. Select table/preset.
             if args.preset is not None:
                 preset_name = args.preset
             elif interactive:
@@ -274,7 +280,6 @@ def main(argv: list[str] | None = None) -> int:
             default_layout = ini.layout if ini else (preset.default_layout if preset else "default")
             default_export = ini.export if ini else (preset.default_export if preset else "default")
 
-            # 4. Select display layout.
             if args.layout:
                 layout = args.layout
             elif interactive:
@@ -282,7 +287,6 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 layout = default_layout
 
-            # 5. Select export format.
             if args.export:
                 export = args.export
             elif interactive:
@@ -290,8 +294,6 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 export = default_export
 
-            # Generate axes. Presets define cell counts/layout conventions;
-            # engine calibration defines where the breakpoints actually belong.
             if args.rpm and args.load:
                 rpm = parse_range(args.rpm)
                 load = parse_range(args.load)
@@ -314,7 +316,6 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  RPM:  {[int(x) for x in rpm]}")
             print(f"  Load: {[int(x) for x in load]} kPa abs")
 
-            # 6. Select output filename.
             default_out = f"map-{spec.name.lower()}.csv" if spec.name != "other" else "map.csv"
             if args.out:
                 out_path=args.out
@@ -323,12 +324,10 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 out_path=default_out
 
-            # 7. Generate with the timing model.
             table=build_table(rpm,load,spec)
             save_table(table,out_path,export=export)
             print(f"\nWrote {out_path} ({len(load)} load × {len(rpm)} RPM, timing generated, export={export}, view={layout})")
 
-            # 8. Show table (always in interactive mode).
             if args.show or interactive:
                 print()
                 print(table.format_grid(layout=layout,color=True,precision=0))
