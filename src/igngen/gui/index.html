@@ -29,6 +29,18 @@
           <label>RPM cells
             <input name="rpm_cells" type="number" min="6" max="64" value="20">
           </label>
+          <label>View
+            <select id="viewMode" name="view">
+              <option value="default" selected>Default — Load ↑ / RPM →</option>
+              <option value="alpha">Alpha — RPM ↓ / Load →</option>
+            </select>
+          </label>
+          <label>Export format
+            <select id="exportMode" name="export">
+              <option value="default" selected>Default — load rows / RPM columns</option>
+              <option value="alpha">Alpha — RPM rows / load columns</option>
+            </select>
+          </label>
           <button class="generate" type="submit">Generate Table</button>
         </div>
 
