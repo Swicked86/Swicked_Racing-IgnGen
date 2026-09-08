@@ -1,241 +1,553 @@
 # Swicked Racing IgnGen
 
-IgnGen is a Python ignition-table generator intended to create explainable **starting calibration maps** from a small set of engine parameters. The model deliberately follows the behavior of a well-developed distributor: an RPM-driven mechanical advance curve, a vacuum-driven advance mechanism, a pressure/boost retard mechanism, a protected idle timing pocket, and a high-RPM soft-limit region.
+IgnGen is an ignition timing table generator for creating **explainable starting calibration maps** from a small set of engine and calibration parameters.
 
-The project is currently under active development on `scaffold/python-cli`.
+It is designed around the behavior of a well-developed distributor-style ignition system:
 
-> **Calibration warning:** generated tables are starting points for calibration and validation, not engine-safe prescriptions. Final timing must be verified on the actual engine with appropriate instrumentation, knock monitoring, fuel-quality controls, and dyno/road testing.
+- an RPM-driven mechanical advance curve
+- vacuum advance below atmospheric pressure
+- boost retard above atmospheric pressure
+- a protected idle timing pocket
+- a configurable high-RPM soft-limit / overspeed region
+- nonlinear RPM and load-axis generation that preserves important engine landmarks
 
-## Design goals
+IgnGen includes both a command-line interface and a compact browser/desktop GUI intended to make table generation easy to use standalone and easy to integrate into other tuning applications.
 
-IgnGen is built around several invariants:
+> **Calibration warning**
+>
+> IgnGen generates starting calibration tables, not guaranteed engine-safe prescriptions. Final ignition timing must be verified on the actual engine with appropriate instrumentation, fuel-quality controls, knock monitoring, and dyno/road testing. The user is responsible for the resulting calibration and engine operation.
 
-- **100 kPa absolute is always an explicit load breakpoint.** It is the crossover between vacuum advance and boost retard.
-- **RPM and load axes are nonlinear.** Resolution belongs where the engine or control strategy changes quickly, not at arbitrary equal intervals.
-- **Table dimensions are constraints.** 8x8, 12x12, 12x24, 20x16, and other ECU shapes should use the same engine model with different breakpoint budgets.
-- **The idle pocket is protected.** It is a localized RPM x MAP region intended to catch falling RPM and remove torque above target idle.
-- **Peak torque is a structural RPM landmark.** The mechanical advance curve is considered fully in by this region and normally holds afterward.
-- **Peak horsepower, soft-limit start, redline, and overspeed are separate landmarks.** They must not appear only by coincidence from gap filling.
-- **Redline is not the end of the table.** The RPM axis should normally extend about 1000 RPM beyond redline so interpolation remains defined during overshoot.
-- **Internal calculation, visual orientation, and export orientation are separate concerns.** The same map may be displayed with load increasing bottom-to-top while being exported in whatever row/column arrangement a target ECU requires.
-- **Generated breakpoints should be clean, readable numbers.** Changing engine profile, redline, idle target, or boost pressure should not produce arbitrary-looking scale values without a clear reason.
+---
 
-## Engine inputs
+## Quick start
 
-The current `EngineSpec` includes:
+### Requirements
+
+- Python 3.10 or newer
+- Linux, Windows, or another platform capable of running Python
+
+Clone the repository and install it in editable mode:
+
+```bash
+git clone https://github.com/Swicked86/Swicked_Racing-IgnGen.git
+cd Swicked_Racing-IgnGen
+python -m pip install -e .
+```
+
+For development and testing:
+
+```bash
+python -m pip install -e ".[dev]"
+pytest -q
+```
+
+---
+
+## GUI
+
+The GUI is the easiest way to use IgnGen.
+
+### Browser mode
+
+This has no GUI dependency beyond Python itself:
+
+```bash
+igngen-gui --browser
+```
+
+IgnGen starts a local HTTP service bound to localhost and opens the interface in the default browser.
+
+### Desktop-window mode
+
+Install the optional desktop GUI dependency:
+
+```bash
+python -m pip install -e ".[gui]"
+igngen-gui
+```
+
+IgnGen uses `pywebview` when available and falls back to the browser if it is not installed.
+
+The same HTML/CSS/JavaScript interface is used on Linux and Windows, which also provides a straightforward path for embedding the generator into a Python/webview-based tuning application.
+
+### GUI workflow
+
+The main panel exposes the normal generation workflow:
+
+1. Select an engine profile.
+2. Select load-cell and RPM-cell counts.
+3. Select the display view.
+4. Select the export format.
+5. Click **Generate Table**.
+
+Detailed engine/calibration values are kept under the expandable **Advanced calibration options** section.
+
+The generated ignition table appears directly below the configuration panel.
+
+### Display views
+
+**Default** is the normal IgnGen view:
+
+```text
+Load increases bottom -> top
+RPM increases left -> right
+Load unit: kPa absolute
+```
+
+**Alpha** transposes the displayed table into an RPM-row / load-column layout and converts the displayed load axis to gauge-style inHg:
+
+```text
+vacuum: negative inHg
+atmosphere: approximately 0 inHg
+boost: positive inHg
+```
+
+The internal timing calculation always remains in **kPa absolute**. Display-unit conversion does not change the timing calculation.
+
+---
+
+## Command-line usage
+
+Running IgnGen with no arguments launches the normal interactive table-generation workflow:
+
+```bash
+igngen
+```
+
+This is equivalent to:
+
+```bash
+igngen new
+```
+
+The interactive workflow steps through:
+
+```text
+Select engine
+    ↓
+Review / edit engine defaults
+    ↓
+Select table preset
+    ↓
+Select display layout
+    ↓
+Select export format
+    ↓
+Select output filename
+    ↓
+Generate V2 timing table
+    ↓
+Display generated table
+```
+
+### Useful commands
+
+List engine profiles:
+
+```bash
+igngen engines
+```
+
+List table presets:
+
+```bash
+igngen presets
+```
+
+Generate a table non-interactively:
+
+```bash
+igngen new \
+  --engine D16Z6 \
+  --preset base \
+  --show
+```
+
+Example boosted generation:
+
+```bash
+igngen new \
+  --engine 4age \
+  --boost-psi 12 \
+  --boost-retard-gain 0.60 \
+  --show
+```
+
+View an existing table:
+
+```bash
+igngen show map.csv
+```
+
+Additional table utilities are available through:
+
+```bash
+igngen bump
+igngen clamp
+igngen convert
+```
+
+Use `--help` on IgnGen or any subcommand for the complete option list:
+
+```bash
+igngen --help
+igngen new --help
+```
+
+---
+
+## Engine profiles
+
+Engine defaults are stored as human-readable INI files in:
+
+```text
+engines/
+```
+
+Profiles contain engine landmarks and starting calibration values. They are intended to provide sensible defaults that a tuner can review and override for a specific engine.
+
+Current calibration inputs include:
+
+### Engine landmarks
 
 - displacement
 - peak horsepower and RPM
 - peak torque and RPM
 - redline RPM
-- boost pressure
+- maximum boost pressure
 - target idle RPM
-- base / initial ignition timing
-- cranking timing
-- total atmospheric timing at peak torque
-- total timing target at full vacuum
-- full-vacuum MAP breakpoint
-- full-boost timing target/limit
-- idle-pocket RPM width and MAP band
-- soft-limit start distance and retard amount
 
-Power inputs are sanity checked using:
+### Mechanical timing
+
+- cranking RPM
+- cranking timing
+- base / initial timing
+- full mechanical timing at peak torque
+
+### Vacuum timing
+
+- full-vacuum MAP endpoint
+- absolute total timing at full vacuum
+
+### Boost timing
+
+- absolute boost timing limit
+- boost-retard gain
+
+The tuner specifies the **absolute total timing limit**, not a degrees-per-psi retard amount.
+
+The default boost-retard gain is:
 
 ```text
-HP = Torque(lb-ft) x RPM / 5252
+0.60
 ```
 
-An inconsistent horsepower/torque pair should be reported to the user rather than silently treated as authoritative.
+It is stored even in naturally aspirated profiles so that changing only the configured maximum boost pressure immediately produces a usable boosted starting table.
+
+### Idle pocket
+
+- total RPM width
+- lower / upper share
+- target timing
+- timing delta
+- idle MAP low / high limits
+
+### Limiter / overspeed
+
+- soft-limit distance before redline
+- soft-limit retard
+- overspeed distance above redline
+
+---
 
 ## Timing model
 
-### 1. Atmospheric master curve
+### 100 kPa atmospheric master curve
 
-The 100 kPa column is the master RPM curve.
+**100 kPa absolute is always the pressure crossover and master timing curve.**
 
-Conceptually:
+At 100 kPa:
 
 ```text
-cranking -> base/initial timing -> mechanical advance -> full mechanical timing
+pressure correction = 0
+commanded timing = mechanical RPM curve
 ```
 
-Mechanical advance rises from the low-RPM/base region toward the specified total timing near peak torque, then reaches a stop and remains static through the normal high-RPM region.
+The mechanical curve progresses conceptually as:
 
-### 2. Vacuum advance
+```text
+cranking
+   ↓
+base / initial timing
+   ↓
+mechanical advance with RPM
+   ↓
+full mechanical timing near peak torque
+```
 
-Vacuum timing fans away from the 100 kPa master curve toward the configured full-vacuum total timing.
+### Vacuum advance
+
+Below 100 kPa, timing advances toward the configured full-vacuum total timing.
 
 Example:
 
 ```text
-100 kPa = atmospheric master timing
- 40 kPa = full-vacuum timing target
+100 kPa -> mechanical timing
+ 40 kPa -> configured full-vacuum total timing
 ```
 
-The maximum vacuum addition is derived from the difference between full-vacuum total timing and full mechanical timing. Below peak-torque RPM, available vacuum advance is scaled back with the progression of the master RPM curve so the low-RPM area does not receive the entire high-RPM vacuum addition.
+Vacuum advance is phased with mechanical-curve progress so the complete high-RPM vacuum addition is not applied indiscriminately at low RPM.
 
-The load-side taper must remain deterministic when table size changes. Axis spacing and timing interpolation therefore need to be designed together rather than allowing arbitrary midpoint-generated load values to change the effective pressure slope.
+### Boost retard
 
-### 3. Boost / pressure retard
+Above 100 kPa, the vacuum pressure scale is mirrored into boost and scaled by the configured boost-retard gain.
 
-Boost retard begins on the pressure side of the explicit 100 kPa crossover and moves toward a configured full-boost timing target.
-
-This side of the map is **not assumed to be physically identical to vacuum advance**. The implementation must preserve the atmospheric master curve while producing a predictable low-RPM/high-load region and a defined timing target at maximum boost.
-
-### 4. Idle timing pocket
-
-The idle pocket is a localized basin around:
+With a normal full-vacuum endpoint of 40 kPa:
 
 ```text
-target idle RPM +/- pocket RPM width
-idle MAP low ... idle MAP high
+100 - 40 = 60 kPa vacuum span
 ```
 
-It should not be a broad low-RPM retard band. Light throttle causes MAP to rise rapidly and moves the operating point out of the pocket into normal timing cells.
+At a boost-retard gain of `1.0`, that pressure span mirrors directly:
 
-The intended behavior is:
+```text
+100 -> 160 kPa
+```
 
-- below target idle: additional timing/torque to catch RPM
-- at target idle: base idle timing
-- above target idle: sharply reduced timing/torque so RPM falls into the pocket
+The normal IgnGen starting gain is `0.60`, so the same timing-limit progression is spread over a larger boost-pressure range:
 
-The idle pocket has higher semantic priority than generic vacuum/mechanical interpolation inside its defined region.
+```text
+100 + (60 / 0.60) = 200 kPa absolute
+```
 
-### 5. High-RPM soft power loss
+The configured boost timing limit remains an **absolute total timing endpoint**. IgnGen calculates the required retard internally.
 
-A configurable soft-limit region begins before redline and progressively removes timing so the engine visibly loses power before the hard RPM limit. The table continues beyond redline to an overspeed endpoint.
+The model deliberately uses indicated MAP directly for this calibration curve. It does not attempt to convert MAP into an oxygen-equivalent or compressor-efficiency-adjusted load before generating the base timing surface.
+
+### Idle timing pocket
+
+The idle pocket is a protected local region around the configured idle RPM and idle MAP range.
+
+Its purpose is to use ignition torque for idle stabilization:
+
+```text
+below target idle -> more timing / catch RPM
+at target idle    -> target idle timing
+above target idle -> less timing / remove torque
+```
+
+The pocket has priority over the generic pressure surface inside its configured region.
+
+### High-RPM soft limit
+
+IgnGen can begin progressively removing timing before redline so the engine develops a noticeable torque reduction before the hard limit.
+
+The generated RPM axis continues beyond redline into an overspeed region so interpolation remains defined during RPM overshoot.
+
+---
 
 ## Axis generation
 
-Axis generation is part of the calibration model, not merely formatting.
+IgnGen treats axis generation as part of the calibration model rather than simple formatting.
 
-### RPM landmarks
+### RPM axis landmarks
 
-Candidate landmarks include:
+Important candidates include:
 
-1. cranking RPM
-2. idle-pocket lower edge
-3. target idle RPM
-4. idle-pocket upper edge
-5. mechanical-advance transition points
-6. peak torque RPM
-7. peak horsepower RPM
-8. soft-limit start RPM
-9. redline RPM
-10. overspeed endpoint (`redline + ~1000 RPM`)
+- cranking RPM
+- idle-pocket lower edge
+- target idle RPM
+- idle-pocket upper edge
+- peak torque RPM
+- peak horsepower RPM
+- soft-limit start
+- redline
+- overspeed endpoint
 
-When the table has fewer columns than candidate landmarks, the generator should use a **single priority-based allocator**. Remaining columns should then be distributed by region importance and interpolation error.
+Remaining RPM cells are allocated into useful regions and snapped to readable values.
 
-Resolution should generally be:
+### Load axis landmarks
 
-- coarse at cranking
-- very dense around the idle pocket
-- dense through the mechanical/VE rise toward peak torque
-- progressively coarser after peak torque where timing becomes comparatively static
-- dense again through the soft-limit/redline region
-- coarse at the final overspeed endpoint
+Important candidates include:
 
-Generated filler RPM values should use a human-readable snapping ladder appropriate to the region rather than always using one fixed increment.
+- one structural deceleration row below the normal idle MAP region
+- idle MAP landmarks
+- vacuum/cruise regions
+- **100 kPa atmosphere — mandatory**
+- boost-pressure landmarks
+- maximum configured boost
+- overboost/headroom region
 
-### Load landmarks
+Load is calculated internally in kPa absolute.
 
-Candidate load landmarks include:
+---
 
-- minimum/deep-vacuum endpoint
-- idle MAP boundaries and center
-- full-vacuum timing breakpoint
-- intermediate vacuum/cruise breakpoints
-- **100 kPa atmosphere -- mandatory**
-- boost onset/intermediate points
-- configured maximum boost MAP
-- overboost endpoint
+## Internal table representation
 
-The atmospheric crossover must never be removed to make room for another breakpoint.
-
-Load values should be generated in kPa absolute internally. Unit conversion to inHg or another display/export unit must not change the internal MAP coordinate used to calculate timing.
-
-## Table orientation
-
-Canonical internal representation:
+The canonical representation is:
 
 ```text
 RPM axis:  ascending
-Load axis: ascending MAP
+Load axis: ascending kPa absolute
 Values:    timing[rpm_index][load_index]
 ```
 
-Preferred Swicked visual layout:
+Display orientation and export orientation are separate from this representation.
 
-```text
-Load increases bottom -> top
-RPM increases left -> right
+This allows IgnGen to generate one canonical timing surface and adapt it to different ECU/table conventions without changing the timing calculation.
+
+---
+
+## Application integration
+
+IgnGen exposes a small Python integration boundary for host applications:
+
+```python
+from igngen.gui_app import generate_payload
+
+result = generate_payload({
+    "engine": "d16z6",
+    "boost_psi": 12,
+    "boost_retard_gain": 0.60,
+    "load_cells": 16,
+    "rpm_cells": 20,
+    "view": "default",
+    "export": "default",
+})
 ```
 
-Export is independent and may transpose axes, reverse either axis, place RPM/load headers in different locations, and use ECU-specific units.
+The response contains the canonical axes and timing surface:
 
-## Current implementation status
+```python
+{
+    "schema": "igngen.table.v1",
+    "rpm": [...],
+    "load_kpa": [...],
+    "load_inhg_gauge": [...],
+    "timing": [...],
+    "export_table": {...},
+    "attribution": {...},
+}
+```
 
-The codebase already contains the major prototype pieces:
+The canonical timing array uses:
 
-- `src/igngen/model.py` -- ignition calculation layers
-- `src/igngen/axes.py` -- nonlinear RPM/load breakpoint generation
-- `src/igngen/table.py` -- table representation/display
-- `src/igngen/io_files.py` -- import/export
-- `src/igngen/engines.py` -- engine profile loading
-- `src/igngen/prompt.py` -- interactive engine inputs
-- `src/igngen/cli.py` -- command-line interface
-- `engines/` -- engine profiles
-- `presets/` -- table-size/layout presets
-- `tests/` -- unit tests for mechanical, vacuum, boost, idle, axes, and IO behavior
+```text
+timing[rpm_index][load_index]
+```
 
-### Known design work still required
+The GUI exposes the same generator through a localhost HTTP endpoint:
 
-The current prototype should be treated as a research implementation rather than a finalized calibration engine. The main items to resolve are:
+```text
+POST /api/generate
+```
 
-1. Replace separate/ad-hoc RPM and load allocation rules with one explicit **landmark priority + regional resolution** system.
-2. Make generated axis values use stable, clean snapping rules across different engine profiles and table dimensions.
-3. Add peak-HP and soft-limit landmarks explicitly instead of allowing them to appear only as filler values.
-4. Rework the boosted load-axis filler strategy; recursive largest-gap midpoint splitting currently creates arbitrary-looking values at higher boost.
-5. Define boost retard independently from the vacuum model instead of assuming a mirrored fan is always correct.
-6. Make the idle pocket a protected target/override region rather than a small generic additive correction.
-7. Consolidate scalar and row-based timing calculations so a cell has one canonical result regardless of which API generated it.
-8. Remove or quarantine legacy calculation paths and aliases once compatibility is no longer needed.
-9. Keep kPa coordinates intact through calculation; display/export rounding must not feed back into timing math.
-10. Expand tests from individual helper behavior to **invariants across table sizes and engine-profile changes**.
+This is intended to make integration possible without coupling another application's table editor, calibration-file handling, undo/redo system, or ECU communications to IgnGen internals.
+
+The intended responsibility boundary is:
+
+```text
+host application
+    ↓
+provides table dimensions / generator inputs
+    ↓
+IgnGen
+    ↓
+generates RPM axis + load axis + absolute crank timing surface
+    ↓
+host application
+    ↓
+imports / displays / edits / saves the calibration
+```
+
+See:
+
+```text
+docs/ALPHALINK_INTEGRATION.md
+```
+
+for the current integration notes and Windows/webview path.
+
+---
+
+## Project layout
+
+```text
+src/igngen/
+├── cli.py             # command-line application
+├── gui_app.py         # GUI launcher + integration API
+├── gui/               # HTML/CSS/JavaScript GUI
+├── v2_engine.py       # canonical V2 timing and axis backend
+├── table.py           # timing-table representation
+├── io_files.py        # import/export helpers
+└── units.py           # kPa / inHg conversion helpers
+
+engines/               # engine profile INI files
+presets/               # table-size/layout presets
+tests/                 # automated tests
+docs/                  # integration and design documentation
+```
+
+---
 
 ## Development
 
+Linux/macOS:
+
 ```bash
 python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
-pytest
+source .venv/bin/activate
+python -m pip install -e ".[dev,gui]"
+pytest -q
 ```
 
-Basic generation:
+Windows PowerShell:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev,gui]"
+pytest -q
+```
+
+Before submitting changes, run the complete test suite and verify both:
 
 ```bash
-igngen new --preset base --engine D16Z6 --show
+igngen
+igngen-gui --browser
 ```
 
-Custom engine values can be supplied interactively or through CLI overrides.
+---
 
-## Testing requirements
+## Release status
 
-The test suite should eventually assert behavior such as:
+IgnGen is under active development. The V2 timing backend, interactive CLI, engine profiles, GUI, default/Alpha table views, unit conversion, export orientation, integration payload, and automated tests are present and usable for evaluation.
 
-- 100 kPa exists for every supported load-axis size
-- cranking, idle target, peak torque, redline, and overspeed survive axis compression according to documented priorities
-- output axes contain the requested number of unique, strictly increasing breakpoints
-- changing table dimensions changes resolution, not the underlying timing model
-- changing display/export units does not change calculated timing
-- changing boost pressure moves boost landmarks predictably
-- the idle pocket survives every later timing layer
-- the soft-limit correction cannot be erased by a later floor/boost clamp
-- scalar point evaluation and full-table generation produce identical results at the same RPM/MAP coordinate
+Before treating a generated table as a final calibration, validate it on the target engine.
 
-## License
+Contributions, engine-profile corrections, exporter work, integration testing, and calibration-model review are welcome.
 
-The repository currently contains provisional MIT metadata in `pyproject.toml`, but MIT does **not** require attribution to remain visibly present inside a running application. The final license should therefore be selected before release if user-visible attribution is a hard requirement.
+---
 
-See the project discussion/documentation before publishing a release under a final license.
+## License and attribution
+
+IgnGen is released under the **Swicked Racing Attribution License 1.0** contained in [`LICENSE`](LICENSE).
+
+The license permits use, modification, redistribution, commercial use, binary integration, and incorporation into larger applications, subject to its attribution requirements.
+
+Applications incorporating IgnGen or a material portion of its ignition-table generation logic must make the following attribution reasonably accessible in the normal user interface:
+
+```text
+Ignition table generation by Swicked Racing IgnGen
+https://github.com/Swicked86/Swicked_Racing-IgnGen
+```
+
+The attribution does not need to be continuously displayed or more prominent than comparable third-party technology credits. See `LICENSE` and `NOTICE` for the complete terms and required notice.
+
+---
+
+## Attribution
+
+**Swicked Racing IgnGen**  
+Ignition table generation by Swicked Racing IgnGen  
+https://github.com/Swicked86/Swicked_Racing-IgnGen
