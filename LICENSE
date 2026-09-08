@@ -1,0 +1,47 @@
+Swicked Racing Attribution License 1.0
+
+Copyright (c) 2026 Swicked Racing
+All rights reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the
+Software, and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+1. Source distributions must retain this copyright notice, this license, and
+   the attribution notice below.
+
+2. Binary distributions must reproduce this copyright notice, this license,
+   and the attribution notice below in the documentation and/or other materials
+   provided with the distribution.
+
+3. Any graphical application, larger work, or product that incorporates the
+   Software or a material portion of its ignition-table generation logic must
+   display the following attribution in a reasonably visible user-interface
+   location available during normal use, such as the generator panel, an About
+   dialog, credits screen, plugin information panel, or equivalent location:
+
+       Ignition table generation by Swicked Racing IgnGen
+       https://github.com/Swicked86/Swicked_Racing-IgnGen
+
+   The attribution need not be displayed continuously and need not be more
+   prominent than comparable third-party technology credits, but it must be
+   accessible without inspecting source code, package metadata, or filesystem
+   contents.
+
+4. The names "Swicked Racing" and "IgnGen" and any associated trademarks may
+   not be used to state or imply endorsement of a derived product without prior
+   written permission, except as required for the attribution above.
+
+5. Modified versions may identify their own authors and products, provided the
+   required attribution is preserved and is not presented in a way that implies
+   the original authors endorse the modifications.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

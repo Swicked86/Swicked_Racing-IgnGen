@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "igngen"
+version = "0.1.0"
+description = "Swicked Racing ignition timing table generator"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Swicked Racing Attribution License 1.0" }
+authors = [{ name = "Swicked Racing" }]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+gui = ["pywebview>=5.0"]
+
+[project.scripts]
+igngen = "igngen.cli:main"
+igngen-gui = "igngen.gui_app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+igngen = ["gui/*.html", "gui/*.css", "gui/*.js"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
