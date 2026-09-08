@@ -474,7 +474,9 @@ for the current integration notes and Windows/webview path.
 
 ```text
 src/igngen/
+├── calibration.py     # canonical timing model + axis generation + engine profiles
 ├── cli.py             # command-line application
+├── prompts.py         # interactive calibration workflow
 ├── gui_app.py         # GUI launcher + integration API
 ├── gui/               # HTML/CSS/JavaScript GUI
 ├── table.py           # timing-table representation
