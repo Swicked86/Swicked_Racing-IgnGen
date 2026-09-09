@@ -38,6 +38,16 @@
     return Number.isFinite(value) ? value : fallback;
   }
 
+  function idlePocketLowerRpm() {
+    const idle = n('idle_rpm',750);
+    const width = Math.max(0,n('idle_pocket_width',100));
+    const lower = Math.max(0,n('idle_pocket_lower_share',.25));
+    const upper = Math.max(0,n('idle_pocket_upper_share',.75));
+    const total = lower + upper;
+    const lowerShare = total > 0 ? lower / total : .25;
+    return Math.max(n('cranking_rpm',500), idle - width * lowerShare);
+  }
+
   function svgEl(tag, attrs={}) {
     const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
     Object.entries(attrs).forEach(([key, value]) => el.setAttribute(key, value));
@@ -128,6 +138,7 @@
   function renderRecurveGraph() {
     if (!recurveGraph) return;
     const idle = n('idle_rpm',750);
+    const pocketLo = idlePocketLowerRpm();
     const peak = n('peak_torque_rpm',3500);
     const base = n('base_timing',15);
     const full = n('mech_timing_at_peak_torque',36);
@@ -142,9 +153,9 @@
     const ys = displayPoints.map(p=>p[1]);
     let yMin = Math.min(...ys)-4, yMax=Math.max(...ys)+4;
     if (yMax-yMin < 16) { const mid=(yMax+yMin)/2; yMin=mid-8; yMax=mid+8; }
-    const scales = graphScales(idle,peak,yMin,yMax);
+    const scales = graphScales(pocketLo,peak,yMin,yMax);
     recurveGraph.replaceChildren();
-    drawGrid(recurveGraph,scales,idle,peak,yMin,yMax,'RPM');
+    drawGrid(recurveGraph,scales,pocketLo,peak,yMin,yMax,'RPM');
 
     const xs=curvePoints.map(p=>p[0]), values=curvePoints.map(p=>p[1]), slopes=pchipSlopes(xs,values);
     let d='';
@@ -168,7 +179,7 @@
       addText(recurveGraph,x,y-13,label,'curve-value');
       if (!fixed) bindRecurveDrag(circle,index,scales,yMin,yMax);
     });
-    recurveReadout.textContent = `P1 may sit at idle (${Math.round(idle)} RPM). The idle pocket remains protected; outside it, the recurve can add timing immediately at idle RPM.`;
+    recurveReadout.textContent = `Idle pocket lower edge: ${Math.round(pocketLo)} RPM. P1 may sit at idle (${Math.round(idle)} RPM); protected pocket cells still override the recurve.`;
   }
 
   function bindRecurveDrag(circle,index,scales,yMin,yMax) {
