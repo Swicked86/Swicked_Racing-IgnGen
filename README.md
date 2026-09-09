@@ -4,14 +4,14 @@ IgnGen is an ignition timing table generator for creating **explainable starting
 
 It is designed around the behavior of a well-developed distributor-style ignition system:
 
-- an RPM-driven mechanical advance curve
+- an RPM-driven mechanical advance curve with user-adjustable **Recurve** control points
 - vacuum advance below atmospheric pressure
 - boost retard above atmospheric pressure
 - a protected idle timing pocket
 - a configurable high-RPM soft-limit / overspeed region
 - nonlinear RPM and load-axis generation that preserves important engine landmarks
 
-IgnGen includes both a command-line interface and a compact browser/desktop GUI intended to make table generation easy to use standalone and easy to integrate into other tuning applications.
+IgnGen includes both a command-line interface and a compact browser/desktop GUI intended to work standalone or as a generator embedded into another tuning application.
 
 ## GUI Preview
 
@@ -23,7 +23,7 @@ IgnGen includes both a command-line interface and a compact browser/desktop GUI 
 
 ![IgnGen advanced calibration options](docs/images/igngen-advanced-settings.png)
 
-*Expanded calibration controls for engine landmarks, mechanical timing, vacuum/boost, idle pocket, and limiter/overspeed settings.*
+*Advanced controls contain engine landmarks, mechanical timing, Recurve, vacuum/boost, idle pocket, and limiter/overspeed settings.*
 
 > **Calibration warning**
 >
@@ -36,7 +36,7 @@ IgnGen includes both a command-line interface and a compact browser/desktop GUI 
 ### Requirements
 
 - Python 3.10 or newer
-- Linux, Windows, or another platform capable of running Python
+- Linux, Windows, WSL, or another platform capable of running Python
 
 Clone the repository and install it in editable mode:
 
@@ -57,48 +57,72 @@ pytest -q
 
 ## GUI
 
-The GUI is the easiest way to use IgnGen.
-
 ### Browser mode
-
-This has no GUI dependency beyond Python itself:
 
 ```bash
 igngen-gui --browser
 ```
 
-IgnGen starts a local HTTP service bound to localhost and opens the interface in the default browser.
+IgnGen starts a localhost HTTP service and opens the interface in the default browser.
 
 ### Desktop-window mode
-
-Install the optional desktop GUI dependency:
 
 ```bash
 python -m pip install -e ".[gui]"
 igngen-gui
 ```
 
-IgnGen uses `pywebview` when available and falls back to the browser if it is not installed.
-
-The same HTML/CSS/JavaScript interface is used on Linux and Windows, which also provides a straightforward path for embedding the generator into a Python/webview-based tuning application.
+IgnGen uses `pywebview` when available and falls back to browser mode if it is not installed.
 
 ### GUI workflow
-
-The main panel exposes the normal generation workflow:
 
 1. Select an engine profile.
 2. Select load-cell and RPM-cell counts.
 3. Select the display view.
 4. Select the export format.
-5. Click **Generate Table**.
-
-Detailed engine/calibration values are kept under the expandable **Advanced calibration options** section.
+5. Expand **Advanced calibration options** when calibration changes are required.
+6. Click **Generate Table**.
 
 The generated ignition table appears directly below the configuration panel.
 
+### Mechanical Recurve editor
+
+The mechanical advance curve is no longer limited to a straight line from idle to peak torque. Under:
+
+```text
+Advanced calibration options
+    → Mechanical Recurve
+```
+
+IgnGen provides three user-set RPM/timing control points:
+
+```text
+Point 1 RPM / timing
+Point 2 RPM / timing
+Point 3 RPM / timing
+```
+
+The GUI also provides a draggable graph. Dragging a point updates the numeric fields; editing the numeric fields redraws the graph.
+
+Point 1 may be positioned at **target idle RPM**, allowing timing to rise immediately as the engine leaves the protected idle MAP region. The idle pocket still has priority inside its configured RPM × MAP rectangle.
+
+For example:
+
+```text
+idle target:       1100 RPM
+idle pocket MAP:   30–45 kPa
+Recurve Point 1:   1100 RPM / 18°
+```
+
+At idle MAP, the protected idle timing remains in control. At the same RPM above the idle-pocket MAP range, the Recurve-defined mechanical timing may apply. The target ECU's normal table interpolation blends the surrounding cells.
+
+The Recurve graph begins at the **lower RPM edge of the idle pocket**, not at target idle RPM. With a 1100 RPM idle, 100 RPM pocket width, and 25/75 lower/upper shares, the graph begins at 1075 RPM while Point 1 may sit at 1100 RPM.
+
+Profiles without explicit Recurve values receive collinear 25%, 50%, and 75% defaults, preserving the original straight-line behavior.
+
 ### Display views
 
-**Default** is the normal IgnGen view:
+**Default**:
 
 ```text
 Load increases bottom -> top
@@ -106,7 +130,7 @@ RPM increases left -> right
 Load unit: kPa absolute
 ```
 
-**Alpha** transposes the displayed table into an RPM-row / load-column layout and converts the displayed load axis to gauge-style inHg:
+**Alpha** transposes the displayed table into RPM rows / load columns and converts the displayed load axis to gauge-style inHg:
 
 ```text
 vacuum: negative inHg
@@ -114,59 +138,37 @@ atmosphere: approximately 0 inHg
 boost: positive inHg
 ```
 
-The internal timing calculation always remains in **kPa absolute**. Display-unit conversion does not change the timing calculation.
+The internal timing calculation always remains in **kPa absolute**.
 
 ---
 
 ## Command-line usage
 
-Running IgnGen with no arguments launches the normal interactive table-generation workflow:
+Running IgnGen with no arguments launches the interactive generation workflow:
 
 ```bash
 igngen
 ```
 
-This is equivalent to:
+Equivalent to:
 
 ```bash
 igngen new
 ```
 
-The interactive workflow steps through:
-
-```text
-Select engine
-    ↓
-Review / edit engine defaults
-    ↓
-Select table preset
-    ↓
-Select display layout
-    ↓
-Select export format
-    ↓
-Select output filename
-    ↓
-Generate timing table
-    ↓
-Display generated table
-```
-
-### Useful commands
-
-List engine profiles:
+Useful commands:
 
 ```bash
 igngen engines
-```
-
-List table presets:
-
-```bash
 igngen presets
+igngen show map.csv
+igngen bump
+igngen clamp
+igngen convert
+igngen --version
 ```
 
-Generate a table non-interactively:
+Generate non-interactively:
 
 ```bash
 igngen new \
@@ -175,7 +177,7 @@ igngen new \
   --show
 ```
 
-Generate and export directly to a CSV file:
+Generate and export CSV:
 
 ```bash
 igngen new \
@@ -185,7 +187,7 @@ igngen new \
   --out d16z6-ignition.csv
 ```
 
-Generate an Alpha-oriented CSV with RPM rows and load columns:
+Alpha-oriented CSV:
 
 ```bash
 igngen new \
@@ -195,9 +197,7 @@ igngen new \
   --out 4age-alpha-ignition.csv
 ```
 
-`--out` selects the output filename. A `.csv` filename writes CSV. `--export default` writes load rows with RPM columns; `--export alpha` writes RPM rows with load columns.
-
-Example boosted generation:
+Boosted example:
 
 ```bash
 igngen new \
@@ -208,21 +208,21 @@ igngen new \
   --show
 ```
 
-View an existing table:
+Recurve values can also be overridden from the CLI:
 
 ```bash
-igngen show map.csv
+igngen new \
+  --engine 4age \
+  --recurve1-rpm 1100 \
+  --recurve1-timing 18 \
+  --recurve2-rpm 2400 \
+  --recurve2-timing 25 \
+  --recurve3-rpm 3500 \
+  --recurve3-timing 32 \
+  --show
 ```
 
-Additional table utilities are available through:
-
-```bash
-igngen bump
-igngen clamp
-igngen convert
-```
-
-Use `--help` on IgnGen or any subcommand for the complete option list:
+Use `--help` for the complete option list:
 
 ```bash
 igngen --help
@@ -239,9 +239,7 @@ Engine defaults are stored as human-readable INI files in:
 engines/
 ```
 
-Profiles contain engine landmarks and starting calibration values. They are intended to provide sensible defaults that a tuner can review and override for a specific engine.
-
-Current calibration inputs include:
+Profiles contain engine landmarks and starting calibration values that can be reviewed and overridden for a specific engine.
 
 ### Engine landmarks
 
@@ -258,6 +256,24 @@ Current calibration inputs include:
 - cranking timing
 - base / initial timing
 - full mechanical timing at peak torque
+
+### Recurve
+
+Optional profile section:
+
+```ini
+[recurve]
+point1_rpm = 1750
+point1_timing = 17
+point2_rpm = 2400
+point2_timing = 23
+point3_rpm = 3500
+point3_timing = 31
+```
+
+Point 1 may equal target idle RPM. Points 2 and 3 must increase strictly, and Point 3 must remain below peak torque RPM.
+
+The timing values themselves do not have to increase monotonically, so a deliberate intermediate taper can be represented.
 
 ### Vacuum timing
 
@@ -305,20 +321,12 @@ At 100 kPa:
 
 ```text
 pressure correction = 0
-commanded timing = mechanical RPM curve
+commanded timing = mechanical Recurve
 ```
 
-The mechanical curve progresses conceptually as:
+The mechanical curve is defined by the Recurve control points and the full-mechanical endpoint near peak torque.
 
-```text
-cranking
-   ↓
-base / initial timing
-   ↓
-mechanical advance with RPM
-   ↓
-full mechanical timing near peak torque
-```
+IgnGen uses shape-preserving cubic interpolation through the control points so the curve passes through the requested timing values without generic-spline overshoot.
 
 ### Vacuum advance
 
@@ -331,51 +339,53 @@ Example:
  40 kPa -> configured full-vacuum total timing
 ```
 
-Vacuum advance is phased with mechanical-curve progress so the complete high-RPM vacuum addition is not applied indiscriminately at low RPM.
+Vacuum correction retains its own RPM progression. Recurving the mechanical master curve does **not** automatically accelerate the vacuum-advance progression.
 
 ### Boost retard
 
 Above 100 kPa, the vacuum pressure scale is mirrored into boost and scaled by the configured boost-retard gain.
 
-With a normal full-vacuum endpoint of 40 kPa:
+With a full-vacuum endpoint of 40 kPa:
 
 ```text
 100 - 40 = 60 kPa vacuum span
 ```
 
-At a boost-retard gain of `1.0`, that pressure span mirrors directly:
+At gain `1.0`:
 
 ```text
 100 -> 160 kPa
 ```
 
-The normal IgnGen starting gain is `0.60`, so the same timing-limit progression is spread over a larger boost-pressure range:
+At the default gain `0.60`:
 
 ```text
 100 + (60 / 0.60) = 200 kPa absolute
 ```
 
-The configured boost timing limit remains an **absolute total timing endpoint**. IgnGen calculates the required retard internally.
+The boost timing limit remains an **absolute total timing endpoint**. IgnGen calculates the required retard internally.
 
-The model deliberately uses indicated MAP directly for this calibration curve. It does not attempt to convert MAP into an oxygen-equivalent or compressor-efficiency-adjusted load before generating the base timing surface.
+The model deliberately uses indicated MAP directly. It does not convert MAP into an oxygen-equivalent or compressor-efficiency-adjusted load before generating the base timing surface.
 
 ### Idle timing pocket
 
-The idle pocket is a protected local region around the configured idle RPM and idle MAP range.
+The idle pocket is a protected local RPM × MAP region around the configured idle point.
 
 Its purpose is to use ignition torque for idle stabilization:
 
 ```text
-below target idle -> more timing / catch RPM
+below target idle -> catch timing
 at target idle    -> target idle timing
-above target idle -> less timing / remove torque
+above target idle -> torque-reduction timing
 ```
 
-The pocket has priority over the generic pressure surface inside its configured region.
+The pocket has priority over the generic pressure surface and the Recurve inside its configured region.
+
+This priority is what allows Point 1 to be placed at idle RPM without destroying the protected idle behavior.
 
 ### High-RPM soft limit
 
-IgnGen can begin progressively removing timing before redline so the engine develops a noticeable torque reduction before the hard limit.
+IgnGen can progressively remove timing before redline so the engine develops a noticeable torque reduction before the hard limit.
 
 The generated RPM axis continues beyond redline into an overspeed region so interpolation remains defined during RPM overshoot.
 
@@ -393,13 +403,14 @@ Important candidates include:
 - idle-pocket lower edge
 - target idle RPM
 - idle-pocket upper edge
+- Recurve Points 1–3
 - peak torque RPM
 - peak horsepower RPM
 - soft-limit start
 - redline
 - overspeed endpoint
 
-Remaining RPM cells are allocated into useful regions and snapped to readable values.
+Recurve RPM values are protected as table breakpoints whenever the requested table size permits.
 
 ### Load axis landmarks
 
@@ -415,6 +426,8 @@ Important candidates include:
 
 Load is calculated internally in kPa absolute.
 
+See [`docs/axis-generation.md`](docs/axis-generation.md) for the detailed allocation rules and Recurve/idle-pocket behavior.
+
 ---
 
 ## Internal table representation
@@ -429,13 +442,11 @@ Values:    timing[rpm_index][load_index]
 
 Display orientation and export orientation are separate from this representation.
 
-This allows IgnGen to generate one canonical timing surface and adapt it to different ECU/table conventions without changing the timing calculation.
-
 ---
 
 ## Application integration
 
-IgnGen exposes a small Python integration boundary for host applications:
+IgnGen exposes a Python integration boundary for host applications:
 
 ```python
 from igngen.gui_app import generate_payload
@@ -451,7 +462,7 @@ result = generate_payload({
 })
 ```
 
-The response contains the canonical axes and timing surface:
+The response contains canonical axes and the timing surface:
 
 ```python
 {
@@ -460,48 +471,27 @@ The response contains the canonical axes and timing surface:
     "load_kpa": [...],
     "load_inhg_gauge": [...],
     "timing": [...],
+    "recurve": [...],
     "export_table": {...},
     "attribution": {...},
 }
 ```
 
-The canonical timing array uses:
+Canonical timing array:
 
 ```text
 timing[rpm_index][load_index]
 ```
 
-The GUI exposes the same generator through a localhost HTTP endpoint:
+HTTP integration:
 
 ```text
+GET  /api/engines
+GET  /api/engine/{profile}
 POST /api/generate
 ```
 
-This is intended to make integration possible without coupling another application's table editor, calibration-file handling, undo/redo system, or ECU communications to IgnGen internals.
-
-The intended responsibility boundary is:
-
-```text
-host application
-    ↓
-provides table dimensions / generator inputs
-    ↓
-IgnGen
-    ↓
-generates RPM axis + load axis + absolute crank timing surface
-    ↓
-host application
-    ↓
-imports / displays / edits / saves the calibration
-```
-
-See:
-
-```text
-docs/ALPHALINK_INTEGRATION.md
-```
-
-for the current integration notes and Windows/webview path.
+See [`docs/ALPHALINK_INTEGRATION.md`](docs/ALPHALINK_INTEGRATION.md) for integration notes.
 
 ---
 
@@ -509,11 +499,11 @@ for the current integration notes and Windows/webview path.
 
 ```text
 src/igngen/
-├── calibration.py     # canonical timing model + axis generation + engine profiles
+├── calibration.py     # timing model, Recurve, axes, engine profile handling
 ├── cli.py             # command-line application
 ├── prompts.py         # interactive calibration workflow
 ├── gui_app.py         # GUI launcher + integration API
-├── gui/               # HTML/CSS/JavaScript GUI
+├── gui/               # HTML/CSS/JavaScript GUI and Recurve editor
 ├── table.py           # timing-table representation
 ├── io_files.py        # import/export helpers
 └── units.py           # kPa / inHg conversion helpers
@@ -528,10 +518,10 @@ docs/                  # integration and design documentation
 
 ## Development
 
-Linux/macOS:
+Linux / WSL / macOS:
 
 ```bash
-python -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[dev,gui]"
 pytest -q
@@ -546,9 +536,18 @@ python -m pip install -e ".[dev,gui]"
 pytest -q
 ```
 
-Before submitting changes, run the complete test suite and verify both:
+The stable/public branch is `main`. Active development can be done on `dev`:
 
 ```bash
+git fetch origin
+git switch dev
+git pull origin dev
+```
+
+Before submitting changes, verify:
+
+```bash
+pytest -q
 igngen
 igngen-gui --browser
 ```
@@ -557,11 +556,9 @@ igngen-gui --browser
 
 ## Release status
 
-IgnGen is under active development. The timing backend, interactive CLI, engine profiles, GUI, default/Alpha table views, unit conversion, export orientation, integration payload, and automated tests are present and usable for evaluation.
+IgnGen is under active development. The timing backend, interactive CLI, engine profiles, draggable mechanical Recurve editor, GUI, default/Alpha table views, unit conversion, export orientation, integration payload, and automated tests are present and usable for evaluation.
 
 Before treating a generated table as a final calibration, validate it on the target engine.
-
-Contributions, engine-profile corrections, exporter work, integration testing, and calibration-model review are welcome.
 
 ---
 
