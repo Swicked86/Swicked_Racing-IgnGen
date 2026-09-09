@@ -234,8 +234,8 @@ def validate_recurve(spec: EngineParameters) -> None:
     points = spec.recurve_points
     rpms = [p[0] for p in points]
     timings = [p[1] for p in points]
-    if not (spec.idle_rpm < rpms[0] < rpms[1] < rpms[2] < spec.peak_torque_rpm):
-        raise ValueError("recurve RPM points must increase strictly between idle RPM and peak torque RPM")
+    if not (spec.idle_rpm <= rpms[0] < rpms[1] < rpms[2] < spec.peak_torque_rpm):
+        raise ValueError("recurve RPM points must increase strictly from idle RPM through peak torque RPM")
     if not all(math.isfinite(v) for v in (*rpms, *timings)):
         raise ValueError("recurve points must be finite numbers")
 
@@ -295,17 +295,19 @@ def _pchip_interpolate(x: float, xs: list[float], ys: list[float]) -> float:
 
 def mechanical_curve_points(spec: EngineParameters) -> list[tuple[float, float]]:
     validate_recurve(spec)
-    return [
-        (float(spec.idle_rpm), float(spec.base_timing)),
-        *[(float(r), float(t)) for r, t in spec.recurve_points],
-        (float(spec.peak_torque_rpm), float(spec.mech_timing_at_peak_torque)),
-    ]
+    recurve = [(float(r), float(t)) for r, t in spec.recurve_points]
+    points: list[tuple[float, float]] = []
+    if recurve[0][0] > spec.idle_rpm:
+        points.append((float(spec.idle_rpm), float(spec.base_timing)))
+    points.extend(recurve)
+    points.append((float(spec.peak_torque_rpm), float(spec.mech_timing_at_peak_torque)))
+    return points
 
 
 def mechanical_timing(rpm: float, spec: EngineParameters) -> float:
     if rpm <= spec.cranking_rpm:
         return float(spec.cranking_timing)
-    if rpm <= spec.idle_rpm:
+    if rpm < spec.idle_rpm:
         return float(spec.base_timing)
     if rpm >= spec.peak_torque_rpm:
         return float(spec.mech_timing_at_peak_torque)
@@ -314,14 +316,17 @@ def mechanical_timing(rpm: float, spec: EngineParameters) -> float:
 
 
 def mechanical_progress(rpm: float, spec: EngineParameters) -> float:
+    """Normalized RPM progress used by pressure corrections.
+
+    This remains independent of the user recurve. Recurving changes the
+    mechanical master timing surface, while vacuum/boost phasing retains its
+    own RPM progression.
+    """
     if rpm <= spec.idle_rpm:
         return 0.0
     if rpm >= spec.peak_torque_rpm:
         return 1.0
-    span = spec.mech_timing_at_peak_torque - spec.base_timing
-    if abs(span) < 1e-9:
-        return clamp01((rpm - spec.idle_rpm) / max(spec.peak_torque_rpm - spec.idle_rpm, 1.0))
-    return clamp01((mechanical_timing(rpm, spec) - spec.base_timing) / span)
+    return clamp01((rpm - spec.idle_rpm) / max(spec.peak_torque_rpm - spec.idle_rpm, 1.0))
 
 
 def pressure_span_kpa(spec: EngineParameters) -> float:
