@@ -10,14 +10,11 @@
   const generateButton = form.querySelector('.generate');
   const recurveGraph = document.getElementById('recurveGraph');
   const recurveReadout = document.getElementById('recurveReadout');
-  const idleExitGraph = document.getElementById('idleExitGraph');
-  const idleExitReadout = document.getElementById('idleExitReadout');
   let lastTable = null;
   let engineRequest = null;
   let generationRequest = null;
   let engineRevision = 0;
   let generationRevision = 0;
-  let idleExitPrototype = null;
 
   const numericFields = [
     'displacement_cc','peak_hp','peak_hp_rpm','peak_torque_lbft','peak_torque_rpm','redline_rpm',
@@ -134,21 +131,22 @@
     const peak = n('peak_torque_rpm',3500);
     const base = n('base_timing',15);
     const full = n('mech_timing_at_peak_torque',36);
-    const points = [
-      [idle,base,'fixed'],
-      [n('recurve_rpm_1',idle+(peak-idle)*.25),n('recurve_timing_1',base+(full-base)*.25),1],
-      [n('recurve_rpm_2',idle+(peak-idle)*.5),n('recurve_timing_2',base+(full-base)*.5),2],
-      [n('recurve_rpm_3',idle+(peak-idle)*.75),n('recurve_timing_3',base+(full-base)*.75),3],
-      [peak,full,'fixed']
-    ];
-    const ys = points.map(p=>p[1]);
+    const p1 = [n('recurve_rpm_1',idle+(peak-idle)*.25),n('recurve_timing_1',base+(full-base)*.25),1];
+    const p2 = [n('recurve_rpm_2',idle+(peak-idle)*.5),n('recurve_timing_2',base+(full-base)*.5),2];
+    const p3 = [n('recurve_rpm_3',idle+(peak-idle)*.75),n('recurve_timing_3',base+(full-base)*.75),3];
+    const controlPoints = [p1,p2,p3];
+    const curvePoints = p1[0] <= idle
+      ? [p1,p2,p3,[peak,full,'fixed']]
+      : [[idle,base,'fixed'],p1,p2,p3,[peak,full,'fixed']];
+    const displayPoints = [[idle,base,'base'],...controlPoints,[peak,full,'fixed']];
+    const ys = displayPoints.map(p=>p[1]);
     let yMin = Math.min(...ys)-4, yMax=Math.max(...ys)+4;
     if (yMax-yMin < 16) { const mid=(yMax+yMin)/2; yMin=mid-8; yMax=mid+8; }
     const scales = graphScales(idle,peak,yMin,yMax);
     recurveGraph.replaceChildren();
     drawGrid(recurveGraph,scales,idle,peak,yMin,yMax,'RPM');
 
-    const xs=points.map(p=>p[0]), values=points.map(p=>p[1]), slopes=pchipSlopes(xs,values);
+    const xs=curvePoints.map(p=>p[0]), values=curvePoints.map(p=>p[1]), slopes=pchipSlopes(xs,values);
     let d='';
     for (let i=0;i<=100;i++) {
       const rpm=idle+(peak-idle)*i/100;
@@ -157,17 +155,23 @@
     }
     recurveGraph.appendChild(svgEl('path',{d,class:'curve-line'}));
 
-    points.forEach(([rpm,timing,index], pointIndex) => {
+    displayPoints.forEach(([rpm,timing,index]) => {
       const x=scales.x(rpm), y=scales.y(timing);
-      const circle=svgEl('circle',{cx:x,cy:y,r:index==='fixed'?6:8,class:index==='fixed'?'curve-point-fixed':'curve-point'});
+      const fixed = index === 'fixed' || index === 'base';
+      const circle=svgEl('circle',{cx:x,cy:y,r:fixed?6:8,class:fixed?'curve-point-fixed':'curve-point'});
       recurveGraph.appendChild(circle);
-      addText(recurveGraph,x,y-13,index==='fixed'?`${Math.round(rpm)} / ${timing.toFixed(1)}°`:`P${index} ${Math.round(rpm)} / ${timing.toFixed(1)}°`,'curve-value');
-      if (index !== 'fixed') bindRecurveDrag(circle,index,scales,yMin,yMax,pointIndex);
+      const label = index === 'base'
+        ? `Base ${Math.round(rpm)} / ${timing.toFixed(1)}°`
+        : index === 'fixed'
+          ? `${Math.round(rpm)} / ${timing.toFixed(1)}°`
+          : `P${index} ${Math.round(rpm)} / ${timing.toFixed(1)}°`;
+      addText(recurveGraph,x,y-13,label,'curve-value');
+      if (!fixed) bindRecurveDrag(circle,index,scales,yMin,yMax);
     });
-    recurveReadout.textContent = `Fixed: ${Math.round(idle)} RPM / ${base.toFixed(1)}° → ${Math.round(peak)} RPM / ${full.toFixed(1)}°. Drag P1–P3 or edit the numeric fields above.`;
+    recurveReadout.textContent = `P1 may sit at idle (${Math.round(idle)} RPM). The idle pocket remains protected; outside it, the recurve can add timing immediately at idle RPM.`;
   }
 
-  function bindRecurveDrag(circle,index,scales,yMin,yMax,pointIndex) {
+  function bindRecurveDrag(circle,index,scales,yMin,yMax) {
     circle.addEventListener('pointerdown', event => {
       event.preventDefault();
       circle.setPointerCapture(event.pointerId);
@@ -179,7 +183,8 @@
         const previous=index===1?idle:n(`recurve_rpm_${index-1}`,idle);
         const next=index===3?peak:n(`recurve_rpm_${index+1}`,peak);
         let rpm=Math.round(scales.invX(px)/10)*10;
-        rpm=Math.max(previous+10,Math.min(next-10,rpm));
+        const minRpm=index===1?previous:previous+10;
+        rpm=Math.max(minRpm,Math.min(next-10,rpm));
         let timing=Math.round(scales.invY(py)*10)/10;
         timing=Math.max(yMin,Math.min(yMax,timing));
         form.elements[`recurve_rpm_${index}`].value=rpm;
@@ -196,61 +201,8 @@
     });
   }
 
-  function renderIdleExitGraph() {
-    if (!idleExitGraph) return;
-    const mapLo=n('idle_map_lo',30), mapHi=n('idle_map_hi',45), atm=100;
-    const target=n('idle_timing_target',10), delta=Math.abs(n('idle_timing_delta',6)), base=n('base_timing',15);
-    if (!idleExitPrototype) idleExitPrototype={map:Math.round(mapHi+(atm-mapHi)*.45),timing:Math.max(target,base)+8};
-    idleExitPrototype.map=Math.max(mapHi+1,Math.min(atm-1,idleExitPrototype.map));
-    const yMin=Math.min(target-delta,base,idleExitPrototype.timing)-4;
-    const yMax=Math.max(target+delta,base,idleExitPrototype.timing)+4;
-    const scales=graphScales(mapLo,atm,yMin,yMax);
-    idleExitGraph.replaceChildren();
-    drawGrid(idleExitGraph,scales,mapLo,atm,yMin,yMax,'MAP (kPa absolute)');
-
-    const pocketX=scales.x(mapLo), pocketRight=scales.x(mapHi);
-    const pocketTop=scales.y(target+delta), pocketBottom=scales.y(target-delta);
-    idleExitGraph.appendChild(svgEl('rect',{x:pocketX,y:pocketTop,width:pocketRight-pocketX,height:pocketBottom-pocketTop,class:'curve-pocket'}));
-    addText(idleExitGraph,(pocketX+pocketRight)/2,pocketTop+18,'PROTECTED IDLE POCKET','curve-value');
-
-    const path=`M ${scales.x(mapHi)} ${scales.y(target)} Q ${scales.x(idleExitPrototype.map)} ${scales.y(idleExitPrototype.timing)} ${scales.x(atm)} ${scales.y(base)}`;
-    idleExitGraph.appendChild(svgEl('path',{d:path,class:'curve-line-muted'}));
-    const fixedA=svgEl('circle',{cx:scales.x(mapHi),cy:scales.y(target),r:6,class:'curve-point-fixed'});
-    const fixedB=svgEl('circle',{cx:scales.x(atm),cy:scales.y(base),r:6,class:'curve-point-fixed'});
-    const point=svgEl('circle',{cx:scales.x(idleExitPrototype.map),cy:scales.y(idleExitPrototype.timing),r:8,class:'curve-point'});
-    idleExitGraph.append(fixedA,point,fixedB);
-    addText(idleExitGraph,scales.x(mapHi),scales.y(target)-13,`${mapHi.toFixed(0)} / ${target.toFixed(1)}°`,'curve-value');
-    addText(idleExitGraph,scales.x(idleExitPrototype.map),scales.y(idleExitPrototype.timing)-13,`${idleExitPrototype.map.toFixed(0)} / ${idleExitPrototype.timing.toFixed(1)}°`,'curve-value');
-    addText(idleExitGraph,scales.x(atm),scales.y(base)-13,`100 / ${base.toFixed(1)}°`,'curve-value');
-    bindIdleExitPrototypeDrag(point,scales,yMin,yMax,mapHi,atm);
-    idleExitReadout.textContent=`Prototype only: locked pocket ends at ${mapHi.toFixed(0)} kPa. Drag the cyan point to explore an idle-exit shape; it is not yet sent to the generator.`;
-  }
-
-  function bindIdleExitPrototypeDrag(circle,scales,yMin,yMax,mapHi,atm) {
-    circle.addEventListener('pointerdown', event => {
-      event.preventDefault();
-      circle.setPointerCapture(event.pointerId);
-      const move=e=>{
-        const rect=idleExitGraph.getBoundingClientRect();
-        const px=(e.clientX-rect.left)*900/rect.width;
-        const py=(e.clientY-rect.top)*260/rect.height;
-        idleExitPrototype.map=Math.round(Math.max(mapHi+1,Math.min(atm-1,scales.invX(px))));
-        idleExitPrototype.timing=Math.round(Math.max(yMin,Math.min(yMax,scales.invY(py)))*10)/10;
-        renderIdleExitGraph();
-      };
-      const up=e=>{
-        circle.releasePointerCapture?.(e.pointerId);
-        window.removeEventListener('pointermove',move);
-        window.removeEventListener('pointerup',up);
-      };
-      window.addEventListener('pointermove',move);
-      window.addEventListener('pointerup',up,{once:true});
-    });
-  }
-
   function renderCurveEditors() {
     renderRecurveGraph();
-    renderIdleExitGraph();
   }
 
   function fillSpec(spec) {
@@ -258,7 +210,6 @@
       const el = form.elements[name];
       if (el && spec[name] !== undefined && spec[name] !== null) el.value = spec[name];
     });
-    idleExitPrototype = null;
     renderCurveEditors();
   }
 
