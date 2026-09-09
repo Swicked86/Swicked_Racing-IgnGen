@@ -32,23 +32,60 @@ If the requested cell count permits it, peak horsepower RPM is also preserved wh
 
 ### Mechanical Recurve landmarks
 
-The mechanical advance curve is defined by five points:
+The mechanical advance curve is controlled by three user-set Recurve knots plus the full-mechanical endpoint:
 
 ```text
-idle RPM / base timing
+idle/base timing when Point 1 is later than idle
 recurve point 1 RPM / timing
 recurve point 2 RPM / timing
 recurve point 3 RPM / timing
 peak torque RPM / full mechanical timing
 ```
 
-The three Recurve points must have strictly increasing RPM values between idle and peak torque. Their timing values are user-set and may be used to bring timing in earlier, later, flatten early, or create a deliberate intermediate taper.
+Point 1 may be placed **at target idle RPM**. Points 2 and 3 must increase strictly in RPM, and Point 3 must remain below peak torque RPM.
 
-IgnGen uses shape-preserving cubic interpolation through the points so the generated mechanical curve passes through each user-entered knot without the uncontrolled overshoot associated with a generic spline.
+This allows the mechanical curve to add timing immediately outside the protected idle pocket. For example, a tuner can keep the idle pocket at its protected timing while commanding substantially more timing at the same RPM as soon as MAP rises above the pocket's configured upper MAP threshold. Normal ECU table interpolation then blends the surrounding cells.
 
-Profiles that do not contain an explicit `[recurve]` section receive collinear defaults at 25%, 50%, and 75% of both the RPM span and timing span. This exactly preserves the original straight-line mechanical advance behavior.
+The protected idle pocket always has priority inside its configured RPM × MAP region, so moving Recurve Point 1 to idle RPM does not overwrite the idle-stabilization cells.
+
+Recurve timing values are user-set and may be used to:
+
+- bring timing in earlier
+- delay timing
+- flatten part of the curve
+- create an intermediate taper
+- reach an aggressive timing value immediately outside idle
+
+IgnGen uses shape-preserving cubic interpolation through the mechanical Recurve knots so the generated curve passes through each user-entered point without the uncontrolled overshoot associated with a generic spline.
+
+Profiles that do not contain an explicit `[recurve]` section receive collinear defaults at 25%, 50%, and 75% of both the RPM span and timing span. This preserves the original straight-line mechanical advance behavior.
 
 Because Recurve RPM values are actual calibration knots, the RPM-axis generator protects them as table breakpoints whenever the requested table size permits it.
+
+### Recurve graph
+
+The GUI exposes the mechanical Recurve as a draggable graph under **Advanced calibration options → Mechanical Recurve**.
+
+The graph's displayed RPM range begins at the **lower RPM edge of the idle pocket**, not at target idle RPM. This makes the protected idle region visible in the same RPM context used to shape the advance curve.
+
+For example, with:
+
+```text
+idle RPM = 1100
+pocket width = 100 RPM
+lower share = 0.25
+upper share = 0.75
+```
+
+the pocket RPM landmarks are:
+
+```text
+1075 / 1100 / 1175 RPM
+```
+
+The Recurve graph therefore begins at **1075 RPM**, while Point 1 may be positioned at **1100 RPM**.
+
+Dragging P1, P2, or P3 updates the corresponding numeric RPM/timing values. Editing the numeric values also redraws the graph.
 
 ### Idle-pocket edges
 
@@ -69,7 +106,7 @@ the RPM landmarks are:
 875 / 900 / 975 RPM
 ```
 
-These points remain available to define the local idle-stabilization region in the generated timing surface.
+These points define the local protected idle-stabilization region in the generated timing surface.
 
 ### Remaining RPM cells
 
@@ -80,7 +117,7 @@ After protected landmarks are inserted, remaining cells are weighted approximate
 ~1/3  peak torque -> overspeed
 ```
 
-The first region now contains the explicit Recurve knots, so filler cells add resolution around the user-defined mechanical-advance shape rather than defining the shape themselves.
+The first region contains the explicit Recurve knots, so filler cells add resolution around the user-defined mechanical-advance shape rather than defining the shape themselves.
 
 Candidate values are snapped to readable RPM steps from:
 
@@ -209,7 +246,7 @@ Ignition tables do not benefit equally from uniform spacing everywhere. IgnGen t
 The generated axes are designed to preserve:
 
 - cranking and idle behavior
-- the idle timing pocket
+- the protected idle timing pocket
 - user-defined Recurve points
 - mechanical advance progression
 - peak torque and peak horsepower landmarks
