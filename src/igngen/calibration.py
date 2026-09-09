@@ -106,7 +106,7 @@ class EngineParameters:
     def derived_idle_targets(self) -> tuple[float, float, float]:
         target = float(self.idle_timing_target)
         delta = max(0.0, float(self.idle_timing_delta))
-        return target + delta, target, target - delta
+        return target - delta, target, target + delta
 
     def with_overrides(self, **changes: float | str | None) -> "EngineParameters":
         usable = {k: v for k, v in changes.items() if v is not None}
@@ -597,7 +597,7 @@ def build_table(rpm: list[float], load: list[float], spec: EngineParameters) -> 
 
 
 def describe_spec(spec: EngineParameters) -> str:
-    catch, target, upper = spec.derived_idle_targets()
+    lower, target, upper = spec.derived_idle_targets()
     span = pressure_span_kpa(spec)
     boost_note = "off"
     if spec.boost_psi > 0:
@@ -607,7 +607,7 @@ def describe_spec(spec: EngineParameters) -> str:
     return (
         f"Engine: {spec.name} — {spec.description}\n"
         f"  {spec.displacement_cc:g} cc; peak HP {spec.peak_hp:g}@{spec.peak_hp_rpm:g}; peak torque {spec.peak_torque_lbft:g}@{spec.peak_torque_rpm:g}; redline {spec.redline_rpm:g}\n"
-        f"  Idle: {spec.idle_rpm:g} RPM; pocket {spec.idle_pocket_lo_rpm:g}/{spec.idle_rpm:g}/{spec.idle_pocket_hi_rpm:g} RPM = {catch:g}/{target:g}/{upper:g}°; MAP {spec.idle_map_lo:g}-{spec.idle_map_hi:g} kPa\n"
+        f"  Idle: {spec.idle_rpm:g} RPM; pocket {spec.idle_pocket_lo_rpm:g}/{spec.idle_rpm:g}/{spec.idle_pocket_hi_rpm:g} RPM = {lower:g}/{target:g}/{upper:g}°; MAP {spec.idle_map_lo:g}-{spec.idle_map_hi:g} kPa\n"
         f"  Mechanical: crank {spec.cranking_timing:g}°@{spec.cranking_rpm:g}; base {spec.base_timing:g}°; full {spec.mech_timing_at_peak_torque:g}°@{spec.peak_torque_rpm:g}\n"
         f"  Recurve: {recurve_note}\n"
         f"  Vacuum: total {spec.vacuum_total_timing:g}° at <= {spec.vacuum_full_map_kpa:g} kPa\n"
