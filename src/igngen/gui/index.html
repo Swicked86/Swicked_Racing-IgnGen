@@ -124,22 +124,11 @@
               <details class="curve-editor" open>
                 <summary>
                   <span>Mechanical Recurve</span>
-                  <small>Drag the three cyan points; idle/base and peak-torque/full-mechanical remain fixed.</small>
+                  <small>Drag the three cyan points. P1 may start at idle RPM; the protected idle pocket still overrides its cells.</small>
                 </summary>
                 <div class="curve-editor-body">
                   <svg id="recurveGraph" class="curve-graph" viewBox="0 0 900 260" role="img" aria-label="Mechanical recurve editor"></svg>
                   <div class="curve-readout" id="recurveReadout"></div>
-                </div>
-              </details>
-
-              <details class="curve-editor">
-                <summary>
-                  <span>Idle Exit</span>
-                  <small>Protected idle pocket stays locked. This is a visual prototype for shaping timing as MAP rises out of the pocket.</small>
-                </summary>
-                <div class="curve-editor-body">
-                  <svg id="idleExitGraph" class="curve-graph" viewBox="0 0 900 260" role="img" aria-label="Idle exit timing editor preview"></svg>
-                  <div class="curve-readout" id="idleExitReadout">Prototype only — idle-exit control points are not yet applied to table generation.</div>
                 </div>
               </details>
             </div>
